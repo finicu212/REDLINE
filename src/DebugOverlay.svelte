@@ -86,6 +86,14 @@
       {#if data?.throttle}<span class="indicator on">THR</span>{/if}
       {#if data?.revLimiterActive}<span class="indicator limiter">LIM</span>{/if}
       {#if data?.shifting}<span class="indicator shift">SHF</span>{/if}
+      <span class="indicator" class:osc-active={data?.shiftOscAmplitude > 0.01}>OSC</span>
+    </div>
+
+    <!-- Row: Shift oscillation -->
+    <span class="label">OSC</span>
+    <div class="bar-container osc-bar-container">
+      <div class="bar osc-bar" style="width: {Math.abs(data?.shiftOscillation || 0) * 50}%; left: {(data?.shiftOscillation || 0) < 0 ? 50 + (data?.shiftOscillation || 0) * 50 : 50}%"></div>
+      <span class="bar-value">{fmt(data?.shiftOscAmplitude, 2)}</span>
     </div>
 
     <!-- Row: Inertia -->
@@ -213,6 +221,10 @@
   .on { background: #1b3a1b; color: #4caf50; }
   .limiter { background: #3a1b1b; color: #ff4020; }
   .shift { background: #3a3a1b; color: #ffc107; }
+  .osc-active { background: #1b2a3a; color: #42a5f5; }
+
+  .osc-bar-container { background: #1a1a2e; }
+  .osc-bar { background: #42a5f5; position: absolute; height: 100%; transition: none; }
 
   .debug-subtitle {
     font-size: 0.55rem;

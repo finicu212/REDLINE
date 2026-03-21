@@ -85,6 +85,7 @@
           dt,
           bandGains: engineAudio ? { ...engineAudio.debugBandGains } : {},
           detune: engineAudio ? engineAudio.debugDetune : 0,
+          shiftOsc: engineAudio ? engineAudio.debugShiftOsc : 0,
         };
       }
 

@@ -1,10 +1,15 @@
 /**
- * Drivetrain physics — gear ratios, inertia model, rev limiter, shift state machine.
+ * Drivetrain physics — gear ratios, inertia model, rev limiter, shift state machine,
+ * and post-shift oscillation modeling.
  *
- * Based on Honda S2000 AP1 gearbox. All torque/inertia values tuned for game feel,
- * not strict realism, but the physics model is structurally correct:
+ * Based on Honda S2000 AP1 gearbox. Physics model:
  *   angular_accel = (drive_torque - resistance_torque) / effective_inertia
  *   effective_inertia = engine_inertia + vehicle_inertia / (total_ratio^2)
+ *
+ * Shift oscillation: when gears engage, engine RPM and wheel-driven RPM equalize
+ * through the drivetrain's spring-mass compliance. This produces a damped sine
+ * oscillation at 6-12 Hz, decaying over 200-400ms. Amplitude scales with the
+ * RPM mismatch at the moment of engagement.
  */
 
 import { IDLE_RPM, REDLINE_RPM, REV_CUT_RPM, MAX_RPM } from './constants.js';
@@ -22,8 +27,13 @@ const ENGINE_BRAKING_FACTOR = 12; // Nm — compression braking on closed thrott
 
 const SHIFT_DURATION = 150;      // ms — clutch disengaged during shift
 
+// Shift oscillation parameters
+const OSCILLATION_FREQ = 6;             // Hz — drivetrain natural frequency (lower = more visible on tacho)
+const OSCILLATION_DECAY_TAU = 0.35;     // seconds — exponential decay time constant
+const OSCILLATION_DURATION = 1.0;       // seconds — total oscillation window
+const OSCILLATION_RPM_SCALE = 0.30;     // fraction of RPM delta that becomes oscillation amplitude
+
 // Simplified torque curve (RPM → Nm at wide-open throttle)
-// Peaks at ~6500 RPM with VTEC-like bump, drops off toward redline
 const TORQUE_CURVE = [
   [850,  120],
   [2000, 155],
@@ -69,6 +79,15 @@ export class Drivetrain {
     this._shiftStart = 0;
     this._shiftTargetGear = 0;
     this._preShiftRPM = 0;
+    this._preShiftThrottle = false;
+
+    // Post-shift oscillation state
+    this._oscActive = false;
+    this._oscStartTime = 0;
+    this._oscRPMDelta = 0;       // signed: negative = upshift (RPM dropped), positive = downshift
+    this._oscDirection = 0;       // +1 upshift, -1 downshift
+    this.shiftOscillation = 0;    // current oscillation value [-1, 1] — consumed by audio
+    this.shiftOscAmplitude = 0;   // current decayed amplitude [0, 1] — consumed by audio
   }
 
   get isNeutral() {
@@ -84,12 +103,16 @@ export class Drivetrain {
     return this.gear === 0 ? 'N' : String(this.gear);
   }
 
-  /** Snapshot of all drivetrain state for audio + debug. */
+  /** Snapshot of all drivetrain state for audio + debug.
+   *  RPM includes oscillation offset for tacho/audio; physics uses raw this.rpm. */
   getState() {
     const inGear = !this.isNeutral && this.gear > 0;
     const totalRatio = inGear ? GEAR_RATIOS[this.gear] * FINAL_DRIVE : 0;
+    // Display RPM = base RPM + oscillation wobble (clamped to valid range)
+    const oscOffset = this._oscActive ? this.shiftOscillation * Math.abs(this._oscRPMDelta) : 0;
+    const displayRPM = Math.max(IDLE_RPM, Math.min(MAX_RPM, this.rpm + oscOffset));
     return {
-      rpm: this.rpm,
+      rpm: displayRPM,
       speed: this.speed,
       gear: this.gear,
       gearLabel: this.gearLabel,
@@ -101,6 +124,10 @@ export class Drivetrain {
         ? ENGINE_INERTIA + VEHICLE_INERTIA / (totalRatio * totalRatio)
         : ENGINE_INERTIA,
       torqueNm: inGear ? lerpTorqueCurve(this.rpm) : 0,
+      // Shift oscillation (consumed by audio for detune + gain modulation)
+      shiftOscillation: this.shiftOscillation,
+      shiftOscAmplitude: this.shiftOscAmplitude,
+      shiftOscRPMDelta: this._oscRPMDelta,
     };
   }
 
@@ -139,11 +166,15 @@ export class Drivetrain {
 
     // Handle shift completion
     if (this._shifting) {
+      this._preShiftThrottle = throttle;
       const now = performance.now();
       if (now - this._shiftStart >= SHIFT_DURATION) {
         this._completeShift();
       }
     }
+
+    // Update post-shift oscillation
+    this._updateOscillation();
 
     const inGear = !this.isNeutral && this.gear > 0;
     const totalRatio = inGear ? GEAR_RATIOS[this.gear] * FINAL_DRIVE : 0;
@@ -192,7 +223,7 @@ export class Drivetrain {
     if (this.rpm < IDLE_RPM) this.rpm = IDLE_RPM;
     if (this.rpm > MAX_RPM) this.rpm = MAX_RPM;
 
-    // Compute vehicle speed from RPM (when in gear)
+    // Compute vehicle speed from base RPM (no oscillation — prevents feedback)
     if (inGear) {
       const wheelRPM = this.rpm / totalRatio;
       this.speed = (wheelRPM * TIRE_CIRCUMFERENCE / 60) * 3.6;
@@ -211,15 +242,60 @@ export class Drivetrain {
 
   /** @private */
   _completeShift() {
+    const oldGear = this.gear;
     const newGear = this._shiftTargetGear;
     this._shifting = false;
     this.gear = newGear;
 
+    let targetRPM = this.rpm;
     if (newGear > 0 && this.speed > 0) {
       const newTotalRatio = GEAR_RATIOS[newGear] * FINAL_DRIVE;
       const wheelRPS = (this.speed / 3.6) / TIRE_CIRCUMFERENCE;
-      this.rpm = Math.max(IDLE_RPM, Math.min(MAX_RPM, wheelRPS * 60 * newTotalRatio));
+      targetRPM = Math.max(IDLE_RPM, Math.min(MAX_RPM, wheelRPS * 60 * newTotalRatio));
     }
+
+    // Compute RPM delta for oscillation: how much RPM jumped
+    const rpmDelta = targetRPM - this.rpm;
+    this.rpm = targetRPM;
+
+    // Trigger post-shift oscillation if there was a meaningful RPM change
+    if (Math.abs(rpmDelta) > 100 && oldGear > 0) {
+      this._oscActive = true;
+      this._oscStartTime = performance.now();
+      this._oscRPMDelta = rpmDelta;
+      this._oscDirection = rpmDelta < 0 ? 1 : -1; // upshift = RPM drops = positive dir
+    }
+  }
+
+  /** @private Update the damped oscillation state. */
+  _updateOscillation() {
+    if (!this._oscActive) {
+      this.shiftOscillation = 0;
+      this.shiftOscAmplitude = 0;
+      return;
+    }
+
+    const elapsed = (performance.now() - this._oscStartTime) / 1000; // seconds
+
+    if (elapsed > OSCILLATION_DURATION) {
+      this._oscActive = false;
+      this.shiftOscillation = 0;
+      this.shiftOscAmplitude = 0;
+      return;
+    }
+
+    // Normalized amplitude [0, 1] based on RPM delta magnitude
+    // Bigger RPM jumps = bigger oscillation
+    const rpmMagnitude = Math.min(1, Math.abs(this._oscRPMDelta) / 3000);
+    const baseAmplitude = rpmMagnitude * OSCILLATION_RPM_SCALE;
+
+    // Exponential decay
+    const decay = Math.exp(-elapsed / OSCILLATION_DECAY_TAU);
+    this.shiftOscAmplitude = baseAmplitude * decay;
+
+    // Damped sine wave
+    const phase = 2 * Math.PI * OSCILLATION_FREQ * elapsed;
+    this.shiftOscillation = Math.sin(phase) * this.shiftOscAmplitude;
   }
 }
 

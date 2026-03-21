@@ -164,23 +164,35 @@ export class EngineAudio {
       this._startAllEngineSources();
     }
 
-    const { rpm, throttle, gear, speed, shifting, revLimiterActive } = state;
+    const { rpm, throttle, gear, speed, shifting, revLimiterActive,
+            shiftOscillation = 0, shiftOscAmplitude = 0, shiftOscRPMDelta = 0 } = state;
     const clamped = Math.max(IDLE_RPM, Math.min(rpm, REDLINE_RPM));
     const nRPM = normalizeRPM(clamped);
     const now = this.ctx.currentTime;
 
-    // --- 1. Pitch via detune (all engine sources) ---
-    const detune = rpmToDetune(clamped);
+    // --- 1. Pitch via detune + shift oscillation wobble ---
+    const baseDetune = rpmToDetune(clamped);
+    // Shift oscillation adds ±cents wobble (scaled by RPM delta magnitude)
+    // Max wobble: ~80 cents at full amplitude ≈ ±400 RPM perceived pitch swing
+    // Small extra detune kick on top of RPM-driven pitch for audio richness
+    const detuneWobble = shiftOscillation * 30;
+    const detune = baseDetune + detuneWobble;
     this.debugDetune = detune;
+    this.debugShiftOsc = shiftOscAmplitude;
 
     for (const key of Object.keys(this._engineSources)) {
       const src = this._engineSources[key];
-      if (src) src.detune.setTargetAtTime(detune, now, 0.03);
+      if (src) src.detune.setTargetAtTime(detune, now, 0.015);
     }
     for (const key of Object.keys(this._extraOffSources)) {
       const src = this._extraOffSources[key];
-      if (src) src.detune.setTargetAtTime(detune, now, 0.03);
+      if (src) src.detune.setTargetAtTime(detune, now, 0.015);
     }
+
+    // Gain modulation factor: oscillation modulates engine volume ±15%
+    // Out of phase with detune (when pitch goes up, gain dips slightly — load transfer feel)
+    // Gain breathing during shift oscillation
+    const gainMod = 1.0 - shiftOscillation * 0.20;
 
     // --- 2. Crossfade gains ---
     // Throttle crossfade: on ↔ off
@@ -198,12 +210,12 @@ export class EngineAudio {
     const pitchedMix = Math.cos(revBlend * Math.PI / 2);
     const revMix = Math.sin(revBlend * Math.PI / 2);
 
-    // Apply gains: each source = throttle_factor × rpm_factor × rev_factor
+    // Apply gains: each source = throttle_factor × rpm_factor × rev_factor × gainMod
     const engineGainValues = {
-      on_low:   onGain * lowGain * pitchedMix,
-      on_high:  onGain * highGain * pitchedMix,
-      off_low:  offGain * lowGain,
-      off_high: offGain * highGain,
+      on_low:   onGain * lowGain * pitchedMix * gainMod,
+      on_high:  onGain * highGain * pitchedMix * gainMod,
+      off_low:  offGain * lowGain * gainMod,
+      off_high: offGain * highGain * gainMod,
     };
 
     this.debugBandGains = { ...engineGainValues, rev: revMix };
@@ -235,13 +247,13 @@ export class EngineAudio {
     // --- 5. Rev limiter ---
     this._updateLimiter(revLimiterActive, now);
 
-    // --- 6. Transmission whine ---
-    this._updateTransmission(speed, gear, now);
+    // --- 6. Transmission whine (with oscillation modulation) ---
+    this._updateTransmission(speed, gear, gainMod, now);
 
-    // --- 7. Shift thud ---
+    // --- 7. Shift thud (context-aware) ---
     if (this._lastGear === -1) this._lastGear = gear;
     if (gear !== this._lastGear && !shifting) {
-      this._playShiftThud();
+      this._playShiftThud(shiftOscRPMDelta, throttle);
       this._lastGear = gear;
     }
     if (shifting) this._lastGear = -1;
@@ -455,7 +467,7 @@ export class EngineAudio {
 
   // === Transmission whine ===
 
-  _updateTransmission(speed, gear, now) {
+  _updateTransmission(speed, gear, gainMod, now) {
     if (!this._tranySource && gear > 0) {
       const buf = this.buffers.get(TRANY_FILE);
       if (!buf) return;
@@ -475,9 +487,10 @@ export class EngineAudio {
     const pitchRate = Math.max(0.3, Math.min(3.0, speed / 60));
     this._tranySource.playbackRate.setTargetAtTime(pitchRate, now, 0.05);
 
+    // Transmission whine also modulated by shift oscillation
     const gearFactor = gear > 0 ? (gear / 5) : 0;
     const speedFactor = Math.min(1, speed / 120);
-    this._tranyGain.gain.setTargetAtTime(gearFactor * speedFactor * 0.15, now, 0.08);
+    this._tranyGain.gain.setTargetAtTime(gearFactor * speedFactor * 0.15 * gainMod, now, 0.08);
   }
 
   _stopTransmission() {
@@ -488,20 +501,45 @@ export class EngineAudio {
 
   // === Shift thud ===
 
-  _playShiftThud() {
+  /**
+   * Context-aware shift thud.
+   * @param {number} rpmDelta - signed RPM change (negative = upshift, positive = downshift)
+   * @param {boolean} throttle - whether throttle was applied during shift
+   */
+  _playShiftThud(rpmDelta, throttle) {
     if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+
+    // Scale by RPM delta magnitude: bigger jump = louder thud
+    const magnitude = Math.min(1, Math.abs(rpmDelta) / 3000);
+    if (magnitude < 0.05) return; // skip tiny shifts (e.g. near-idle)
+
+    // Throttle adds intensity: WOT shift is harsher than off-throttle
+    const throttleFactor = throttle ? 1.0 : 0.6;
+
+    // Base frequency: downshifts are higher pitched (sharper engagement)
+    const isDownshift = rpmDelta > 0;
+    const baseFreq = isDownshift ? 80 : 55;
+    const endFreq = isDownshift ? 40 : 25;
+
+    // Amplitude: 0.1 (gentle) to 0.35 (violent)
+    const amp = (0.1 + magnitude * 0.25) * throttleFactor;
+
+    // Decay time: bigger shifts ring longer
+    const decayTau = 0.02 + magnitude * 0.02;
+
     const osc = this.ctx.createOscillator();
     osc.type = 'sine';
-    osc.frequency.value = 60;
-    osc.frequency.setTargetAtTime(30, this.ctx.currentTime, 0.03);
+    osc.frequency.value = baseFreq;
+    osc.frequency.setTargetAtTime(endFreq, now, 0.03);
 
     const gain = this.ctx.createGain();
-    gain.gain.value = 0.25;
-    gain.gain.setTargetAtTime(0, this.ctx.currentTime + 0.01, 0.025);
+    gain.gain.value = amp;
+    gain.gain.setTargetAtTime(0, now + 0.01, decayTau);
 
     osc.connect(gain);
     gain.connect(this.masterGain);
-    osc.start(this.ctx.currentTime);
-    osc.stop(this.ctx.currentTime + 0.15);
+    osc.start(now);
+    osc.stop(now + 0.2);
   }
 }
