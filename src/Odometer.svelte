@@ -1,9 +1,8 @@
 <script>
   import { onMount } from 'svelte';
 
-  let { rpm = 850 } = $props();
+  let { speed = 0 } = $props();
 
-  const MAX_RPM = 9000;
   const STORAGE_KEY = 'redline_km';
 
   let km = $state(parseFloat(localStorage.getItem(STORAGE_KEY)) || 0);
@@ -16,9 +15,14 @@
 
   onMount(() => {
     let animFrameId;
-    function loop() {
-      if (rpm > 1000) {
-        km += (rpm / MAX_RPM) * 0.0003;
+    let lastTime = performance.now();
+
+    function loop(now) {
+      const dt = (now - lastTime) / 1000;
+      lastTime = now;
+
+      if (speed > 0) {
+        km += (speed / 3600) * dt; // km/h → km/s → km per frame
       }
       animFrameId = requestAnimationFrame(loop);
     }

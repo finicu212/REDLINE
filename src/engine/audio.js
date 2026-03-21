@@ -1,42 +1,82 @@
 /**
  * EngineAudio — Web Audio API engine sound with crossfade between frequency layers.
  *
- * Uses BAC engine samples from markeasting/engine-audio. The samples are split
- * by throttle state (on/off) and frequency band (low/mid/high), all recorded
- * at ~1000 RPM. Pitch shifting via playbackRate simulates RPM changes.
+ * Uses BAC engine samples from markeasting/engine-audio. Samples are frequency-band
+ * layers (low/mid/high) of the same engine recording. All play simultaneously;
+ * crossfade weights shift the tonal balance as RPM changes.
  *
- * RPM-to-layer crossfade zones:
- *   850–3000  → low
- *   3000–5000 → low ↔ mid crossfade
- *   5000–6500 → mid ↔ high crossfade
- *   6500–9000 → high (+ veryhigh blend on off-throttle)
+ * All zones are derived from the shared RPM constants — change REDLINE_RPM in
+ * constants.js and audio automatically scales to match.
+ *
+ * Architecture:
+ *   - A single playbackRate drives pitch for ALL bands (they're from the same
+ *     recording, so they must stay in sync). This is the "RPM sound".
+ *   - Crossfade gains shift low→mid→high as normalized RPM goes 0→1.
+ *   - The SAMPLE_RPM constant is the RPM at which the recording sounds "native".
+ *     playbackRate = currentRPM / SAMPLE_RPM.
  */
 
-const REFERENCE_RPM = 1000;
+import { IDLE_RPM, REDLINE_RPM, normalizeRPM } from './constants.js';
+
+// The RPM at which the raw samples sound correct without pitch shift.
+// All BAC samples were recorded at this engine speed.
+const SAMPLE_RPM = 1000;
 
 const SAMPLES = {
   on: [
-    { band: 'low',  file: '/audio/BAC_Mono_onlow.wav',  minRPM: 850,  maxRPM: 5000 },
-    { band: 'mid',  file: '/audio/BAC_Mono_onmid.wav',  minRPM: 3000, maxRPM: 6500 },
-    { band: 'high', file: '/audio/BAC_Mono_onhigh.wav', minRPM: 5000, maxRPM: 9000 },
+    { band: 'low',  file: '/audio/BAC_Mono_onlow.wav' },
+    { band: 'mid',  file: '/audio/BAC_Mono_onmid.wav' },
+    { band: 'high', file: '/audio/BAC_Mono_onhigh.wav' },
   ],
   off: [
-    { band: 'low',      file: '/audio/BAC_Mono_offlow.wav',      minRPM: 850,  maxRPM: 5000 },
-    { band: 'mid',      file: '/audio/BAC_Mono_offmid.wav',      minRPM: 3000, maxRPM: 6500 },
-    { band: 'high',     file: '/audio/BAC_Mono_offhigh.wav',     minRPM: 5000, maxRPM: 9000 },
-    { band: 'veryhigh', file: '/audio/BAC_Mono_offveryhigh.wav', minRPM: 6500, maxRPM: 9000 },
+    { band: 'low',      file: '/audio/BAC_Mono_offlow.wav' },
+    { band: 'mid',      file: '/audio/BAC_Mono_offmid.wav' },
+    { band: 'high',     file: '/audio/BAC_Mono_offhigh.wav' },
+    { band: 'veryhigh', file: '/audio/BAC_Mono_offveryhigh.wav' },
   ],
 };
 
 const ALL_FILES = [...SAMPLES.on, ...SAMPLES.off];
 
-// Crossfade zones: RPM ranges where two layers blend
-const ZONES = [
-  { lo: 850,  hi: 3000, lower: 'low',  upper: 'low' },   // pure low
-  { lo: 3000, hi: 5000, lower: 'low',  upper: 'mid' },   // low → mid
-  { lo: 5000, hi: 6500, lower: 'mid',  upper: 'high' },  // mid → high
-  { lo: 6500, hi: 9000, lower: 'high', upper: 'high' },   // pure high
-];
+/**
+ * Compute per-band gains from normalized RPM (0–1).
+ *
+ * Three overlapping triangular windows across the 0–1 range:
+ *   low:  peaks at 0.0, fades to 0 by 0.5
+ *   mid:  peaks at 0.5, fades to 0 at 0.0 and 1.0
+ *   high: peaks at 1.0, fades to 0 by 0.5
+ *
+ * Equal-power (cos/sin) curves at the crossover points prevent volume dips.
+ */
+function computeBandGains(nRPM) {
+  // Clamp to [0, 1] — below idle or above redline should pin to the edges
+  const n = Math.max(0, Math.min(1, nRPM));
+
+  let low = 0, mid = 0, high = 0;
+
+  if (n < 0.35) {
+    // Pure low zone (0 – 0.35)
+    low = 1;
+  } else if (n < 0.55) {
+    // Low → mid crossfade (0.35 – 0.55)
+    const t = (n - 0.35) / 0.2;
+    low  = Math.cos(t * Math.PI / 2);
+    mid  = Math.sin(t * Math.PI / 2);
+  } else if (n < 0.7) {
+    // Pure mid zone (0.55 – 0.7)
+    mid = 1;
+  } else if (n < 0.9) {
+    // Mid → high crossfade (0.7 – 0.9)
+    const t = (n - 0.7) / 0.2;
+    mid  = Math.cos(t * Math.PI / 2);
+    high = Math.sin(t * Math.PI / 2);
+  } else {
+    // Pure high zone (0.9 – 1.0)
+    high = 1;
+  }
+
+  return { low, mid, high };
+}
 
 export class EngineAudio {
   constructor() {
@@ -47,10 +87,9 @@ export class EngineAudio {
     /** @type {GainNode|null} */
     this.masterGain = null;
 
-    // Active layer sources and gains (keyed by band name)
     this._sources = {};
     this._gains = {};
-    this._throttle = true; // true = revving (on), false = decel (off)
+    this._throttle = true;
     this._started = false;
   }
 
@@ -89,12 +128,12 @@ export class EngineAudio {
   /**
    * Update engine sound for the given RPM and throttle state.
    * @param {number} rpm
-   * @param {boolean} [throttle=true] - true if revving, false if decelerating
+   * @param {boolean} [throttle=true]
    */
   setRPM(rpm, throttle = true) {
     if (!this.ctx || this.buffers.size === 0) return;
 
-    const clamped = Math.max(850, Math.min(rpm, 9000));
+    const clamped = Math.max(IDLE_RPM, Math.min(rpm, REDLINE_RPM));
 
     // Switch sample set if throttle state changed
     if (throttle !== this._throttle || !this._started) {
@@ -106,48 +145,32 @@ export class EngineAudio {
     const set = throttle ? SAMPLES.on : SAMPLES.off;
     const now = this.ctx.currentTime;
 
-    // Pitch shift all active sources based on RPM
-    const pitchRate = Math.max(0.7, Math.min(4.0, clamped / REFERENCE_RPM));
+    // Single playbackRate for all bands — they're from the same recording
+    const pitchRate = clamped / SAMPLE_RPM;
     for (const entry of set) {
       const src = this._sources[entry.band];
-      if (src) src.playbackRate.value = pitchRate;
+      if (src) {
+        src.playbackRate.setTargetAtTime(pitchRate, now, 0.03);
+      }
     }
 
-    // Find current crossfade zone
-    let zone = ZONES[0];
-    for (const z of ZONES) {
-      if (clamped >= z.lo) zone = z;
-    }
-
-    // Compute per-band gain
-    const bandGains = {};
-    for (const entry of set) {
-      bandGains[entry.band] = 0;
-    }
-
-    if (zone.lower === zone.upper) {
-      // Pure zone — single band at full volume
-      bandGains[zone.lower] = 1;
-    } else {
-      // Crossfade zone — equal-power blend
-      const t = (clamped - zone.lo) / (zone.hi - zone.lo);
-      bandGains[zone.lower] = Math.cos(t * Math.PI / 2);
-      bandGains[zone.upper] = Math.sin(t * Math.PI / 2);
-    }
-
-    // Off-throttle: blend veryhigh above 6500
-    if (!throttle && bandGains.veryhigh !== undefined && clamped > 6500) {
-      const t = (clamped - 6500) / (9000 - 6500);
-      bandGains.veryhigh = t * 0.5; // subtle blend
-    }
+    // Crossfade based on normalized RPM (0 = idle, 1 = redline)
+    const nRPM = normalizeRPM(clamped);
+    const gains = computeBandGains(nRPM);
 
     // Apply gains with smoothing
     for (const entry of set) {
       const gain = this._gains[entry.band];
-      if (gain) {
-        const val = bandGains[entry.band] || 0;
-        gain.gain.setTargetAtTime(val, now, 0.05);
+      if (!gain) continue;
+
+      let val = gains[entry.band] || 0;
+
+      // Off-throttle veryhigh: subtle blend in the top 20%
+      if (entry.band === 'veryhigh' && !throttle && nRPM > 0.8) {
+        val = ((nRPM - 0.8) / 0.2) * 0.4;
       }
+
+      gain.gain.setTargetAtTime(val, now, 0.05);
     }
   }
 
@@ -162,10 +185,9 @@ export class EngineAudio {
     }
   }
 
-  /** @private Rebuild all source nodes for current throttle state. */
+  /** @private */
   _rebuildSources() {
     this._fadeOutAll();
-
     const set = this._throttle ? SAMPLES.on : SAMPLES.off;
 
     for (const entry of set) {
@@ -187,7 +209,7 @@ export class EngineAudio {
     }
   }
 
-  /** @private Fade out and stop all current sources. */
+  /** @private */
   _fadeOutAll() {
     const now = this.ctx ? this.ctx.currentTime : 0;
     for (const band of Object.keys(this._gains)) {
