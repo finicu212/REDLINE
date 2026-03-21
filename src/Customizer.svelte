@@ -27,7 +27,7 @@
   <div class="option-group">
     <span class="label">Cylinders</span>
     <div class="toggle-row">
-      <button class:active={cylinders === 4} onclick={() => cylinders = 4}>4</button>
+      <button class:active={cylinders === 4} disabled={layout === 'v'} onclick={() => cylinders = 4}>4</button>
       <button class:active={cylinders === 6} onclick={() => cylinders = 6}>6</button>
     </div>
   </div>
@@ -36,7 +36,7 @@
     <span class="label">Layout</span>
     <div class="toggle-row">
       <button class:active={layout === 'inline'} onclick={() => layout = 'inline'}>Inline</button>
-      <button class:active={layout === 'v'} onclick={() => layout = 'v'}>V-Layout</button>
+      <button class:active={layout === 'v'} onclick={() => { layout = 'v'; cylinders = 6; }}>V-Layout</button>
     </div>
   </div>
 
@@ -104,9 +104,14 @@
     transition: all 0.2s;
   }
 
-  .toggle-row button:hover {
+  .toggle-row button:hover:not(:disabled) {
     border-color: #555;
     color: #ccc;
+  }
+
+  .toggle-row button:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
   }
 
   .toggle-row button.active {

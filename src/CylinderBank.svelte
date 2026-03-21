@@ -12,18 +12,26 @@
 
   let positions = $derived(getCylinderPositions(cylinders, layout));
   let svgWidth = $derived(layout === 'v' && cylinders === 6 ? 280 : 30 + cylinders * 70);
-  let svgHeight = $derived(layout === 'v' ? 180 : 140);
+  // Inline: PAD + CYL_H + PAD. V-layout: PAD + CYL_H/2 + V_GAP + CYL_H/2 + PAD
+  let svgHeight = $derived(layout === 'v' ? PAD * 2 + CYL_H + V_GAP : PAD * 2 + CYL_H);
+
+  // Cylinder rect is 60px tall centered at origin (y=-30 to y=+30).
+  // Padding = 34px ensures glow filter + rect edges stay inside the viewBox.
+  const PAD = 34;
+  const CYL_H = 60;
+  const V_GAP = 80; // vertical distance between V-layout row centers
 
   function getCylinderPositions(count, lay) {
     const p = [];
     if (lay === 'v' && count === 6) {
+      const centerY = PAD + CYL_H / 2 + V_GAP / 2;
       for (let i = 0; i < 3; i++) {
-        p.push({ x: 60 + i * 70, y: 20, angle: -12 });
-        p.push({ x: 60 + i * 70, y: 100, angle: 12 });
+        p.push({ x: 60 + i * 70, y: centerY - V_GAP / 2, angle: -12 });
+        p.push({ x: 60 + i * 70, y: centerY + V_GAP / 2, angle: 12 });
       }
     } else {
       for (let i = 0; i < count; i++) {
-        p.push({ x: 30 + i * 70, y: 50, angle: 0 });
+        p.push({ x: 30 + i * 70, y: PAD + CYL_H / 2, angle: 0 });
       }
     }
     return p;
