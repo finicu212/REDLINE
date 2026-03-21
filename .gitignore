@@ -1,0 +1,23 @@
+# Dotfiles and dotfolders
+.*
+
+# But track .gitignore itself
+!.gitignore
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# OS files
+Thumbs.db
+Desktop.ini
+
+# Editor files
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
