@@ -84,6 +84,7 @@
     <div class="indicators">
       <span class="indicator gear-ind">{data?.gearLabel || 'N'}</span>
       {#if data?.throttle}<span class="indicator on">THR</span>{/if}
+      {#if data?.braking}<span class="indicator brake">BRK</span>{/if}
       {#if data?.revLimiterActive}<span class="indicator limiter">LIM</span>{/if}
       {#if data?.shifting}<span class="indicator shift">SHF</span>{/if}
       <span class="indicator" class:osc-active={data?.shiftOscAmplitude > 0.01}>OSC</span>
@@ -219,6 +220,7 @@
   }
   .gear-ind { color: #ff4020; font-weight: bold; font-size: 0.7rem; }
   .on { background: #1b3a1b; color: #4caf50; }
+  .brake { background: #3a1b1b; color: #ff6060; }
   .limiter { background: #3a1b1b; color: #ff4020; }
   .shift { background: #3a3a1b; color: #ffc107; }
   .osc-active { background: #1b2a3a; color: #42a5f5; }

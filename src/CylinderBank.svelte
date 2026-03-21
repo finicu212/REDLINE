@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
 
-  let { rpm = 850, cylinders = 4, layout = 'inline' } = $props();
+  let { rpm = 850, cylinders = 4, layout = 'inline', throttle = false } = $props();
 
   const FIRING_ORDERS = {
     4: [0, 2, 3, 1],
@@ -12,14 +12,20 @@
 
   let positions = $derived(getCylinderPositions(cylinders, layout));
   let svgWidth = $derived(layout === 'v' && cylinders === 6 ? 280 : 30 + cylinders * 70);
-  // Inline: PAD + CYL_H + PAD. V-layout: PAD + CYL_H/2 + V_GAP + CYL_H/2 + PAD
   let svgHeight = $derived(layout === 'v' ? PAD * 2 + CYL_H + V_GAP : PAD * 2 + CYL_H);
 
-  // Cylinder rect is 60px tall centered at origin (y=-30 to y=+30).
-  // Padding = 34px ensures glow filter + rect edges stay inside the viewBox.
   const PAD = 34;
   const CYL_H = 60;
-  const V_GAP = 80; // vertical distance between V-layout row centers
+  const V_GAP = 80;
+
+  // Colors
+  const COL_IDLE = '#2a2a3e';
+  const COL_POWER = '#ff4020';       // red-orange: combustion under load
+  const COL_POWER_STROKE = '#ff6040';
+  const COL_POWER_GLOW = 'rgba(255, 64, 32, 0.8)';
+  const COL_BRAKE = '#3a6fff';        // blue: compression/engine braking
+  const COL_BRAKE_STROKE = '#5080ff';
+  const COL_BRAKE_GLOW = 'rgba(58, 111, 255, 0.6)';
 
   function getCylinderPositions(count, lay) {
     const p = [];
@@ -35,6 +41,12 @@
       }
     }
     return p;
+  }
+
+  function getFiringColor(firing) {
+    if (!firing) return { fill: COL_IDLE, stroke: '#444', glow: '' };
+    if (throttle) return { fill: COL_POWER, stroke: COL_POWER_STROKE, glow: `filter: drop-shadow(0 0 12px ${COL_POWER_GLOW})` };
+    return { fill: COL_BRAKE, stroke: COL_BRAKE_STROKE, glow: `filter: drop-shadow(0 0 10px ${COL_BRAKE_GLOW})` };
   }
 
   onMount(() => {
@@ -67,6 +79,7 @@
 
 <svg width={svgWidth} height={svgHeight} viewBox="0 0 {svgWidth} {svgHeight}">
   {#each positions as pos, i}
+    {@const col = getFiringColor(firingStates[i])}
     <g transform="translate({pos.x}, {pos.y}) rotate({pos.angle})">
       <rect
         x="-22"
@@ -75,12 +88,10 @@
         height="60"
         rx="6"
         ry="6"
-        fill={firingStates[i] ? '#ff4020' : '#2a2a3e'}
-        stroke={firingStates[i] ? '#ff6040' : '#444'}
+        fill={col.fill}
+        stroke={col.stroke}
         stroke-width="2"
-        style={firingStates[i]
-          ? 'filter: drop-shadow(0 0 12px rgba(255, 64, 32, 0.8))'
-          : ''}
+        style={col.glow}
       />
       <text
         x="0"

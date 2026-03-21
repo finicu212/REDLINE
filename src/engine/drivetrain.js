@@ -24,6 +24,7 @@ const VEHICLE_INERTIA = 90;      // effective vehicle rotational inertia at whee
 
 const FRICTION_TORQUE = 8;       // Nm — constant mechanical friction
 const ENGINE_BRAKING_FACTOR = 12; // Nm — compression braking on closed throttle
+const BRAKE_DECEL = 9.0;          // m/s² — vehicle deceleration under braking (~0.9g)
 
 const SHIFT_DURATION = 150;      // ms — clutch disengaged during shift
 
@@ -160,8 +161,9 @@ export class Drivetrain {
    * Update physics. Call every frame.
    * @param {number} dt - delta time in seconds
    * @param {boolean} throttle - true if throttle is open
+   * @param {boolean} braking - true if brake is applied
    */
-  update(dt, throttle) {
+  update(dt, throttle, braking = false) {
     dt = Math.min(dt, 0.05);
 
     // Handle shift completion
@@ -229,6 +231,22 @@ export class Drivetrain {
       this.speed = (wheelRPM * TIRE_CIRCUMFERENCE / 60) * 3.6;
     } else if (!this._shifting) {
       this.speed = Math.max(0, this.speed - this.speed * 0.3 * dt);
+    }
+
+    // Braking: decelerates the vehicle (wheels), not the engine directly.
+    // When in gear, reduced speed will pull RPM down next frame via the
+    // speed→RPM coupling. When in neutral, just slows the car.
+    if (braking && this.speed > 0) {
+      const speedMS = this.speed / 3.6;
+      const newSpeedMS = Math.max(0, speedMS - BRAKE_DECEL * dt);
+      this.speed = newSpeedMS * 3.6;
+
+      // In gear: sync RPM to the braked wheel speed
+      if (inGear) {
+        const brakedWheelRPS = newSpeedMS / TIRE_CIRCUMFERENCE;
+        const brakedRPM = brakedWheelRPS * 60 * totalRatio;
+        this.rpm = Math.max(IDLE_RPM, brakedRPM);
+      }
     }
   }
 

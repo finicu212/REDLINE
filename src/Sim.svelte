@@ -13,6 +13,7 @@
   let speed = $state(0);
   let gearLabel = $state('N');
   let revving = $state(false);
+  let braking = $state(false);
   let showHint = $state(true);
   let showDebug = $state(true);
   let debugState = $state(null);
@@ -35,6 +36,9 @@
       e.preventDefault();
       drivetrain.shiftDown();
     }
+    if ((e.code === 'KeyS' || e.code === 'KeyB') && !e.repeat) {
+      braking = true;
+    }
     if (e.code === 'Backquote' && !e.repeat) {
       showDebug = !showDebug;
     }
@@ -43,6 +47,9 @@
   function onKeyUp(e) {
     if (e.code === 'Space') {
       revving = false;
+    }
+    if (e.code === 'KeyS' || e.code === 'KeyB') {
+      braking = false;
     }
   }
 
@@ -68,7 +75,7 @@
       const dt = (now - lastTime) / 1000;
       lastTime = now;
 
-      drivetrain.update(dt, revving);
+      drivetrain.update(dt, revving, braking);
 
       const state = drivetrain.getState();
       state.throttle = revving;
@@ -82,6 +89,7 @@
       if (showDebug) {
         debugState = {
           ...state,
+          braking,
           dt,
           bandGains: engineAudio ? { ...engineAudio.debugBandGains } : {},
           detune: engineAudio ? engineAudio.debugDetune : 0,
@@ -106,7 +114,7 @@
 
 <div class="sim">
   <div class="cylinder-area">
-    <CylinderBank {rpm} cylinders={config.cylinders} layout={config.layout} />
+    <CylinderBank {rpm} cylinders={config.cylinders} layout={config.layout} throttle={revving} />
   </div>
 
   {#if showDebug && debugState}
@@ -119,8 +127,8 @@
     </div>
 
     <div class="hud-center">
-      {#if showHint}
-        <p class="hint">HOLD SPACE / CLICK to rev &middot; UP/DOWN to shift &middot; ` for debug</p>
+      {#if showHint || showDebug}
+        <p class="hint" class:hint-persist={showDebug}>SPACE / CLICK rev &middot; S / B brake &middot; UP/DOWN shift &middot; ` debug</p>
       {/if}
       <GearIndicator gear={gearLabel} {speed} />
     </div>
@@ -176,6 +184,11 @@
     color: #555;
     letter-spacing: 0.1em;
     animation: fade 4s forwards;
+  }
+
+  .hint-persist {
+    animation: none;
+    opacity: 1;
   }
 
   @keyframes fade {
