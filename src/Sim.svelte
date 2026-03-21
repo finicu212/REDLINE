@@ -14,7 +14,7 @@
   let gearLabel = $state('N');
   let revving = $state(false);
   let showHint = $state(true);
-  let showDebug = $state(false);
+  let showDebug = $state(true);
   let debugState = $state(null);
 
   /** @type {import('./engine/audio.js').EngineAudio} */
@@ -84,7 +84,7 @@
           ...state,
           dt,
           bandGains: engineAudio ? { ...engineAudio.debugBandGains } : {},
-          playbackRate: engineAudio ? engineAudio.debugPlaybackRate : 0,
+          detune: engineAudio ? engineAudio.debugDetune : 0,
         };
       }
 

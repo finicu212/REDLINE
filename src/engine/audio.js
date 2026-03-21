@@ -1,125 +1,105 @@
 /**
- * EngineAudio — Web Audio API engine sound with multiple layered systems.
+ * EngineAudio — Web Audio API engine sound matching markeasting/engine-audio pitch model.
  *
- * Layers:
- *   1. Engine tone    — BAC frequency bands (low/mid/high), crossfaded by normalized RPM
- *   2. Decel tone     — tw_off 4-band stack (verylow/low/lowmid/high) on throttle release
- *   3. Rev limiter    — limiter.wav gated loop when fuel cut is active
- *   4. Transmission   — trany_power_high.wav pitched by vehicle speed, louder in higher gears
- *   5. Shift thud     — synthesized low-freq transient on gear change
+ * Architecture (matching the reference implementation):
+ *   - 4 engine samples always playing simultaneously: on_low, on_high, off_low, off_high
+ *   - Gains = throttle_factor × rpm_factor (no source rebuilding on throttle change)
+ *   - Pitch via detune: cents = (rpm - 1000) * 0.2
+ *     At 7200 RPM: 1240 cents ~= 2.05x playbackRate (NOT 7.2x!)
+ *   - RPM crossfade: low↔high between 3000–6500 RPM (equal-power)
+ *   - Throttle crossfade: on↔off between 0–1 (equal-power)
  *
- * Accepts a rich engine state object from drivetrain.getState().
+ * Additional layers:
+ *   - REV.wav: on-throttle near-redline loop at native pitch
+ *   - limiter.wav: gated loop during fuel cut
+ *   - trany_power_high.wav: transmission whine pitched by speed
+ *   - tw_off* files: transmission decel layer
+ *   - Shift thud: synthesized transient
  */
 
 import { IDLE_RPM, REDLINE_RPM, normalizeRPM } from './constants.js';
 
+// Samples recorded at 1000 RPM
 const SAMPLE_RPM = 1000;
+// Pitch factor: cents per RPM deviation from SAMPLE_RPM
+const RPM_PITCH_FACTOR = 0.2;
 
 // --- Sample definitions ---
 
-const ENGINE_ON = [
-  { band: 'low',  file: '/audio/BAC_Mono_onlow.wav' },
-  { band: 'mid',  file: '/audio/BAC_Mono_onmid.wav' },
-  { band: 'high', file: '/audio/BAC_Mono_onhigh.wav' },
-];
+// Core engine samples (all 4 play simultaneously, gains modulated by throttle × RPM)
+const ENGINE_SAMPLES = {
+  on_low:  '/audio/BAC_Mono_onlow.wav',
+  on_high: '/audio/BAC_Mono_onhigh.wav',
+  off_low: '/audio/BAC_Mono_offlow.wav',
+  off_high: '/audio/BAC_Mono_offhigh.wav',
+};
 
-const ENGINE_OFF = [
+// Additional off-throttle samples (mid frequencies not in 2-layer model)
+const ENGINE_EXTRA_OFF = {
+  off_mid:      '/audio/BAC_Mono_offmid.wav',
+  off_veryhigh: '/audio/BAC_Mono_offveryhigh.wav',
+};
+
+// Transmission decel layers
+const TRANY_DECEL = [
   { band: 'verylow', file: '/audio/tw_offverylow_4.wav' },
   { band: 'low',     file: '/audio/tw_offlow_4.wav' },
   { band: 'lowmid',  file: '/audio/tw_offlowmid_4.wav' },
   { band: 'high',    file: '/audio/tw_offhigh_4.wav' },
 ];
 
-const REV_FILE = '/audio/REV.wav';          // on-throttle near-redline loop, plays at native pitch
+const REV_FILE = '/audio/REV.wav';
 const LIMITER_FILE = '/audio/limiter.wav';
 const TRANY_FILE = '/audio/trany_power_high.wav';
 
 const ALL_FILES = [
-  ...ENGINE_ON, ...ENGINE_OFF,
+  ...Object.values(ENGINE_SAMPLES).map(file => ({ file })),
+  ...Object.values(ENGINE_EXTRA_OFF).map(file => ({ file })),
+  ...TRANY_DECEL,
   { file: REV_FILE },
   { file: LIMITER_FILE },
   { file: TRANY_FILE },
 ];
 
-// nRPM threshold where REV.wav starts fading in and pitched layers fade out
-const REV_BLEND_START = 0.82;
-const REV_BLEND_END = 0.95;
+// RPM crossfade zone (matching markeasting)
+const RPM_XFADE_LOW = 3000;
+const RPM_XFADE_HIGH = 6500;
 
-// --- Crossfade helpers ---
+// REV.wav blend zone (normalized RPM)
+const REV_BLEND_START = 0.995;
+const REV_BLEND_END = 0.999;
 
-/** 3-band crossfade for on-throttle (low/mid/high). */
-function computeOnGains(nRPM) {
-  const n = Math.max(0, Math.min(1, nRPM));
-  let low = 0, mid = 0, high = 0;
+// --- Crossfade helper (matching markeasting's equal-power) ---
 
-  if (n < 0.35) {
-    low = 1;
-  } else if (n < 0.55) {
-    const t = (n - 0.35) / 0.2;
-    low = Math.cos(t * Math.PI / 2);
-    mid = Math.sin(t * Math.PI / 2);
-  } else if (n < 0.7) {
-    mid = 1;
-  } else if (n < 0.9) {
-    const t = (n - 0.7) / 0.2;
-    mid  = Math.cos(t * Math.PI / 2);
-    high = Math.sin(t * Math.PI / 2);
-  } else {
-    high = 1;
-  }
-
-  return { low, mid, high };
+function crossFade(value, start, end) {
+  const x = Math.max(0, Math.min(1, (value - start) / (end - start)));
+  return {
+    gain1: Math.cos((1.0 - x) * 0.5 * Math.PI), // fades IN as value increases
+    gain2: Math.cos(x * 0.5 * Math.PI),          // fades OUT as value increases
+  };
 }
 
-/** 4-band crossfade for off-throttle (verylow/low/lowmid/high). */
-function computeOffGains(nRPM) {
-  const n = Math.max(0, Math.min(1, nRPM));
-  let verylow = 0, low = 0, lowmid = 0, high = 0;
-
-  if (n < 0.2) {
-    verylow = 1;
-  } else if (n < 0.35) {
-    const t = (n - 0.2) / 0.15;
-    verylow = Math.cos(t * Math.PI / 2);
-    low     = Math.sin(t * Math.PI / 2);
-  } else if (n < 0.5) {
-    low = 1;
-  } else if (n < 0.65) {
-    const t = (n - 0.5) / 0.15;
-    low    = Math.cos(t * Math.PI / 2);
-    lowmid = Math.sin(t * Math.PI / 2);
-  } else if (n < 0.8) {
-    lowmid = 1;
-  } else if (n < 0.92) {
-    const t = (n - 0.8) / 0.12;
-    lowmid = Math.cos(t * Math.PI / 2);
-    high   = Math.sin(t * Math.PI / 2);
-  } else {
-    high = 1;
-  }
-
-  return { verylow, low, lowmid, high };
+/** Convert RPM to detune cents: (rpm - 1000) * 0.2 */
+function rpmToDetune(rpm) {
+  return (rpm - SAMPLE_RPM) * RPM_PITCH_FACTOR;
 }
 
 // --- Main class ---
 
 export class EngineAudio {
   constructor() {
-    /** @type {AudioContext|null} */
     this.ctx = null;
-    /** @type {Map<string, AudioBuffer>} */
     this.buffers = new Map();
-    /** @type {GainNode|null} */
     this.masterGain = null;
 
-    // Engine tone layer
-    this._onSources = {};
-    this._onGains = {};
-    this._offSources = {};
-    this._offGains = {};
-    this._throttle = true;
+    // Core engine: 4 simultaneous sources
+    this._engineSources = {};  // keyed by 'on_low', 'on_high', 'off_low', 'off_high'
+    this._engineGains = {};
+    // Extra off-throttle engine layers
+    this._extraOffSources = {};
+    this._extraOffGains = {};
 
-    // REV layer (near-redline on-throttle, native pitch)
+    // REV layer
     this._revSource = null;
     this._revGain = null;
 
@@ -128,18 +108,22 @@ export class EngineAudio {
     this._limiterGain = null;
     this._limiterActive = false;
 
-    // Transmission whine layer
+    // Transmission whine (speed-based)
     this._tranySource = null;
     this._tranyGain = null;
+
+    // Transmission decel layers
+    this._decelSources = {};
+    this._decelGains = {};
 
     // Shift thud
     this._lastGear = -1;
 
     this._started = false;
 
-    // Debug state (read by DebugOverlay)
+    // Debug
     this.debugBandGains = {};
-    this.debugPlaybackRate = 0;
+    this.debugDetune = 0;
   }
 
   async init(onProgress) {
@@ -167,6 +151,7 @@ export class EngineAudio {
     if (this.ctx && this.ctx.state === 'suspended') {
       this.ctx.resume();
     }
+    this._startAllEngineSources();
   }
 
   /**
@@ -175,107 +160,155 @@ export class EngineAudio {
    */
   setEngineState(state) {
     if (!this.ctx || this.buffers.size === 0) return;
+    if (!this._started) {
+      this._startAllEngineSources();
+    }
 
     const { rpm, throttle, gear, speed, shifting, revLimiterActive } = state;
     const clamped = Math.max(IDLE_RPM, Math.min(rpm, REDLINE_RPM));
     const nRPM = normalizeRPM(clamped);
     const now = this.ctx.currentTime;
 
-    // --- 1. Engine tone layers ---
-    if (throttle !== this._throttle || !this._started) {
-      this._throttle = throttle;
-      this._rebuildEngineSources();
-      this._started = true;
+    // --- 1. Pitch via detune (all engine sources) ---
+    const detune = rpmToDetune(clamped);
+    this.debugDetune = detune;
+
+    for (const key of Object.keys(this._engineSources)) {
+      const src = this._engineSources[key];
+      if (src) src.detune.setTargetAtTime(detune, now, 0.03);
+    }
+    for (const key of Object.keys(this._extraOffSources)) {
+      const src = this._extraOffSources[key];
+      if (src) src.detune.setTargetAtTime(detune, now, 0.03);
     }
 
-    const pitchRate = clamped / SAMPLE_RPM;
-    this.debugPlaybackRate = pitchRate;
+    // --- 2. Crossfade gains ---
+    // Throttle crossfade: on ↔ off
+    const throttleVal = throttle ? 1 : 0;
+    const { gain1: onGain, gain2: offGain } = crossFade(throttleVal, 0, 1);
 
-    if (throttle) {
-      // On-throttle: 3-band pitched layers + REV.wav at top end
-      const gains = computeOnGains(nRPM);
+    // RPM crossfade: low ↔ high (3000–6500 RPM)
+    const { gain1: highGain, gain2: lowGain } = crossFade(clamped, RPM_XFADE_LOW, RPM_XFADE_HIGH);
 
-      // Compute REV crossfade: 0 below REV_BLEND_START, 1 at REV_BLEND_END
-      let revBlend = 0;
-      if (nRPM > REV_BLEND_START) {
-        revBlend = Math.min(1, (nRPM - REV_BLEND_START) / (REV_BLEND_END - REV_BLEND_START));
-      }
-      // Equal-power crossfade between pitched layers and REV
-      const pitchedMix = Math.cos(revBlend * Math.PI / 2);
-      const revMix = Math.sin(revBlend * Math.PI / 2);
+    // REV crossfade for on-throttle near redline
+    let revBlend = 0;
+    if (throttle && nRPM > REV_BLEND_START) {
+      revBlend = Math.min(1, (nRPM - REV_BLEND_START) / (REV_BLEND_END - REV_BLEND_START));
+    }
+    const pitchedMix = Math.cos(revBlend * Math.PI / 2);
+    const revMix = Math.sin(revBlend * Math.PI / 2);
 
-      this.debugBandGains = { ...gains, rev: revMix };
+    // Apply gains: each source = throttle_factor × rpm_factor × rev_factor
+    const engineGainValues = {
+      on_low:   onGain * lowGain * pitchedMix,
+      on_high:  onGain * highGain * pitchedMix,
+      off_low:  offGain * lowGain,
+      off_high: offGain * highGain,
+    };
 
-      for (const entry of ENGINE_ON) {
-        const src = this._onSources[entry.band];
-        if (src) src.playbackRate.setTargetAtTime(pitchRate, now, 0.03);
-        const g = this._onGains[entry.band];
-        if (g) g.gain.setTargetAtTime((gains[entry.band] || 0) * pitchedMix, now, 0.05);
-      }
+    this.debugBandGains = { ...engineGainValues, rev: revMix };
 
-      // REV layer: start if needed, set gain — never touch playbackRate
-      this._ensureRevSource(now);
-      if (this._revGain) {
-        this._revGain.gain.setTargetAtTime(revMix, now, 0.05);
-      }
-    } else {
-      // When off-throttle, fade REV out
-      if (this._revGain) {
-        this._revGain.gain.setTargetAtTime(0, now, 0.03);
-      }
-      // Off-throttle: 4-band
-      const gains = computeOffGains(nRPM);
-      this.debugBandGains = gains;
-      for (const entry of ENGINE_OFF) {
-        const src = this._offSources[entry.band];
-        if (src) src.playbackRate.setTargetAtTime(pitchRate, now, 0.03);
-        const g = this._offGains[entry.band];
-        if (g) g.gain.setTargetAtTime(gains[entry.band] || 0, now, 0.05);
-      }
+    for (const key of Object.keys(engineGainValues)) {
+      const g = this._engineGains[key];
+      if (g) g.gain.setTargetAtTime(engineGainValues[key], now, 0.05);
     }
 
-    // --- 2. Rev limiter layer ---
+    // Extra off-throttle layers (mid, veryhigh) — blend in off-throttle mid range
+    const midBlend = Math.max(0, 1 - Math.abs(clamped - 4500) / 2000); // peaks at 4500
+    const vhBlend = highGain * 0.5; // subtle top-end addition
+    if (this._extraOffGains.off_mid) {
+      this._extraOffGains.off_mid.gain.setTargetAtTime(offGain * midBlend * 0.6, now, 0.05);
+    }
+    if (this._extraOffGains.off_veryhigh) {
+      this._extraOffGains.off_veryhigh.gain.setTargetAtTime(offGain * vhBlend, now, 0.05);
+    }
+
+    // --- 3. REV layer ---
+    this._ensureRevSource(now);
+    if (this._revGain) {
+      this._revGain.gain.setTargetAtTime(revMix, now, 0.05);
+    }
+
+    // --- 4. Transmission decel layers ---
+    this._updateDecelLayers(offGain, clamped, detune, now);
+
+    // --- 5. Rev limiter ---
     this._updateLimiter(revLimiterActive, now);
 
-    // --- 3. Transmission whine layer ---
+    // --- 6. Transmission whine ---
     this._updateTransmission(speed, gear, now);
 
-    // --- 4. Shift thud ---
+    // --- 7. Shift thud ---
     if (this._lastGear === -1) this._lastGear = gear;
     if (gear !== this._lastGear && !shifting) {
       this._playShiftThud();
       this._lastGear = gear;
     }
-    if (shifting) this._lastGear = -1; // reset so we detect completion
+    if (shifting) this._lastGear = -1;
   }
 
-  // Backwards-compat: keep setRPM working
   setRPM(rpm, throttle = true) {
     this.setEngineState({ rpm, throttle, gear: 0, speed: 0, shifting: false, revLimiterActive: false });
   }
 
   stop() {
-    this._fadeOutEngineSources();
+    this._stopAllEngineSources();
     this._stopRevSource();
     this._stopLimiter();
     this._stopTransmission();
+    this._stopDecelLayers();
     if (this.ctx) {
       this.masterGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.05);
       setTimeout(() => { if (this.ctx) this.ctx.suspend(); }, 300);
     }
   }
 
-  // === Engine tone sources ===
+  // === Engine sources (all 4 always running) ===
 
-  /** @private */
-  _rebuildEngineSources() {
-    this._fadeOutEngineSources();
+  _startAllEngineSources() {
+    if (this._started) return;
+    const now = this.ctx.currentTime;
 
-    const set = this._throttle ? ENGINE_ON : ENGINE_OFF;
-    const sources = this._throttle ? this._onSources : this._offSources;
-    const gains = this._throttle ? this._onGains : this._offGains;
+    // Core 4 engine samples
+    for (const [key, file] of Object.entries(ENGINE_SAMPLES)) {
+      const buf = this.buffers.get(file);
+      if (!buf) continue;
 
-    for (const entry of set) {
+      const gain = this.ctx.createGain();
+      gain.gain.value = 0;
+      gain.connect(this.masterGain);
+
+      const source = this.ctx.createBufferSource();
+      source.buffer = buf;
+      source.loop = true;
+      source.connect(gain);
+      source.start(now);
+
+      this._engineSources[key] = source;
+      this._engineGains[key] = gain;
+    }
+
+    // Extra off-throttle layers
+    for (const [key, file] of Object.entries(ENGINE_EXTRA_OFF)) {
+      const buf = this.buffers.get(file);
+      if (!buf) continue;
+
+      const gain = this.ctx.createGain();
+      gain.gain.value = 0;
+      gain.connect(this.masterGain);
+
+      const source = this.ctx.createBufferSource();
+      source.buffer = buf;
+      source.loop = true;
+      source.connect(gain);
+      source.start(now);
+
+      this._extraOffSources[key] = source;
+      this._extraOffGains[key] = gain;
+    }
+
+    // Decel transmission layers
+    for (const entry of TRANY_DECEL) {
       const buf = this.buffers.get(entry.file);
       if (!buf) continue;
 
@@ -287,37 +320,78 @@ export class EngineAudio {
       source.buffer = buf;
       source.loop = true;
       source.connect(gain);
-      source.start(this.ctx.currentTime);
+      source.start(now);
 
-      sources[entry.band] = source;
-      gains[entry.band] = gain;
+      this._decelSources[entry.band] = source;
+      this._decelGains[entry.band] = gain;
     }
+
+    this._started = true;
   }
 
-  /** @private */
-  _fadeOutEngineSources() {
+  _stopAllEngineSources() {
     const now = this.ctx ? this.ctx.currentTime : 0;
-
-    for (const set of [this._onGains, this._offGains]) {
-      for (const band of Object.keys(set)) {
-        if (set[band]) set[band].gain.setTargetAtTime(0, now, 0.033);
+    for (const gains of [this._engineGains, this._extraOffGains, this._decelGains]) {
+      for (const key of Object.keys(gains)) {
+        if (gains[key]) gains[key].gain.setTargetAtTime(0, now, 0.033);
       }
     }
-    for (const set of [this._onSources, this._offSources]) {
-      for (const band of Object.keys(set)) {
-        const src = set[band];
+    for (const sources of [this._engineSources, this._extraOffSources, this._decelSources]) {
+      for (const key of Object.keys(sources)) {
+        const src = sources[key];
         if (src) setTimeout(() => { try { src.stop(); } catch {} }, 300);
       }
     }
-    this._onSources = {};
-    this._onGains = {};
-    this._offSources = {};
-    this._offGains = {};
+    this._engineSources = {};
+    this._engineGains = {};
+    this._extraOffSources = {};
+    this._extraOffGains = {};
+    this._decelSources = {};
+    this._decelGains = {};
+    this._started = false;
   }
 
-  // === REV layer (near-redline, native pitch) ===
+  // === Transmission decel layers ===
 
-  /** @private Start REV loop if not already running. */
+  _updateDecelLayers(offGain, rpm, detune, now) {
+    // 4-band crossfade for decel transmission noise
+    const n = normalizeRPM(rpm);
+    let verylow = 0, low = 0, lowmid = 0, high = 0;
+
+    if (n < 0.25) { verylow = 1; }
+    else if (n < 0.4) {
+      const t = (n - 0.25) / 0.15;
+      verylow = Math.cos(t * Math.PI / 2);
+      low = Math.sin(t * Math.PI / 2);
+    } else if (n < 0.55) { low = 1; }
+    else if (n < 0.7) {
+      const t = (n - 0.55) / 0.15;
+      low = Math.cos(t * Math.PI / 2);
+      lowmid = Math.sin(t * Math.PI / 2);
+    } else if (n < 0.85) { lowmid = 1; }
+    else if (n < 0.95) {
+      const t = (n - 0.85) / 0.1;
+      lowmid = Math.cos(t * Math.PI / 2);
+      high = Math.sin(t * Math.PI / 2);
+    } else { high = 1; }
+
+    const decelVol = offGain * 0.3; // subtle layer alongside engine off sounds
+    const vals = { verylow, low, lowmid, high };
+
+    for (const band of Object.keys(vals)) {
+      const src = this._decelSources[band];
+      if (src) src.detune.setTargetAtTime(detune, now, 0.03);
+      const g = this._decelGains[band];
+      if (g) g.gain.setTargetAtTime(vals[band] * decelVol, now, 0.05);
+    }
+  }
+
+  _stopDecelLayers() {
+    // handled by _stopAllEngineSources
+  }
+
+  // === REV layer ===
+
   _ensureRevSource(now) {
     if (this._revSource) return;
     const buf = this.buffers.get(REV_FILE);
@@ -330,16 +404,13 @@ export class EngineAudio {
     this._revSource = this.ctx.createBufferSource();
     this._revSource.buffer = buf;
     this._revSource.loop = true;
-    // No playbackRate modification — plays at recorded pitch always
     this._revSource.connect(this._revGain);
     this._revSource.start(now);
   }
 
-  /** @private */
   _stopRevSource() {
     if (this._revGain) {
-      const now = this.ctx ? this.ctx.currentTime : 0;
-      this._revGain.gain.setTargetAtTime(0, now, 0.02);
+      this._revGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.02);
     }
     const src = this._revSource;
     if (src) setTimeout(() => { try { src.stop(); } catch {} }, 200);
@@ -347,12 +418,10 @@ export class EngineAudio {
     this._revGain = null;
   }
 
-  // === Rev limiter layer ===
+  // === Rev limiter ===
 
-  /** @private */
   _updateLimiter(active, now) {
     if (active && !this._limiterActive) {
-      // Start limiter loop
       const buf = this.buffers.get(LIMITER_FILE);
       if (!buf) return;
       this._limiterGain = this.ctx.createGain();
@@ -368,10 +437,7 @@ export class EngineAudio {
       this._limiterGain.gain.setTargetAtTime(0.6, now, 0.02);
       this._limiterActive = true;
     } else if (!active && this._limiterActive) {
-      // Fade out limiter
-      if (this._limiterGain) {
-        this._limiterGain.gain.setTargetAtTime(0, now, 0.02);
-      }
+      if (this._limiterGain) this._limiterGain.gain.setTargetAtTime(0, now, 0.02);
       const src = this._limiterSource;
       if (src) setTimeout(() => { try { src.stop(); } catch {} }, 200);
       this._limiterSource = null;
@@ -380,21 +446,16 @@ export class EngineAudio {
     }
   }
 
-  /** @private */
   _stopLimiter() {
-    if (this._limiterSource) {
-      try { this._limiterSource.stop(); } catch {}
-    }
+    if (this._limiterSource) { try { this._limiterSource.stop(); } catch {} }
     this._limiterSource = null;
     this._limiterGain = null;
     this._limiterActive = false;
   }
 
-  // === Transmission whine layer ===
+  // === Transmission whine ===
 
-  /** @private */
   _updateTransmission(speed, gear, now) {
-    // Start on first call
     if (!this._tranySource && gear > 0) {
       const buf = this.buffers.get(TRANY_FILE);
       if (!buf) return;
@@ -411,33 +472,24 @@ export class EngineAudio {
 
     if (!this._tranySource || !this._tranyGain) return;
 
-    // Pitch by speed: 1.0 at ~60 km/h, range 0.3–3.0
     const pitchRate = Math.max(0.3, Math.min(3.0, speed / 60));
     this._tranySource.playbackRate.setTargetAtTime(pitchRate, now, 0.05);
 
-    // Volume: scales with speed and gear (louder in higher gears)
     const gearFactor = gear > 0 ? (gear / 5) : 0;
     const speedFactor = Math.min(1, speed / 120);
-    const vol = gearFactor * speedFactor * 0.15; // subtle
-    this._tranyGain.gain.setTargetAtTime(vol, now, 0.08);
+    this._tranyGain.gain.setTargetAtTime(gearFactor * speedFactor * 0.15, now, 0.08);
   }
 
-  /** @private */
   _stopTransmission() {
-    if (this._tranySource) {
-      try { this._tranySource.stop(); } catch {}
-    }
+    if (this._tranySource) { try { this._tranySource.stop(); } catch {} }
     this._tranySource = null;
     this._tranyGain = null;
   }
 
-  // === Shift thud (synthesized) ===
+  // === Shift thud ===
 
-  /** @private */
   _playShiftThud() {
     if (!this.ctx) return;
-
-    // Short burst of low-frequency oscillation simulating drivetrain clunk
     const osc = this.ctx.createOscillator();
     osc.type = 'sine';
     osc.frequency.value = 60;

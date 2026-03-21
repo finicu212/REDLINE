@@ -95,11 +95,11 @@
       <span class="bar-value">{fmt(data?.effectiveInertia, 2)} kg·m²</span>
     </div>
 
-    <!-- Row: Playback rate -->
-    <span class="label">PBR</span>
+    <!-- Row: Detune -->
+    <span class="label">DET</span>
     <div class="bar-container">
-      <div class="bar pbr-bar" style="width: {data ? Math.min(100, (data.playbackRate / 8) * 100) : 0}%"></div>
-      <span class="bar-value">{fmt(data?.playbackRate, 2)}x</span>
+      <div class="bar pbr-bar" style="width: {data ? Math.min(100, (data.detune / 1400) * 100) : 0}%"></div>
+      <span class="bar-value">{fmt(data?.detune, 0)} ¢</span>
     </div>
   </div>
 
