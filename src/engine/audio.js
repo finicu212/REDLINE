@@ -175,7 +175,7 @@ export class EngineAudio {
     // Shift oscillation adds ±cents wobble (scaled by RPM delta magnitude)
     // Max wobble: ~80 cents at full amplitude ≈ ±400 RPM perceived pitch swing
     // Small extra detune kick on top of RPM-driven pitch for audio richness
-    const detuneWobble = shiftOscillation * 30;
+    const detuneWobble = shiftOscillation * 45;
     const detune = baseDetune + detuneWobble;
     this.debugDetune = detune;
     this.debugShiftOsc = shiftOscAmplitude;
@@ -192,7 +192,7 @@ export class EngineAudio {
     // Gain modulation factor: oscillation modulates engine volume ±15%
     // Out of phase with detune (when pitch goes up, gain dips slightly — load transfer feel)
     // Gain breathing during shift oscillation
-    const gainMod = 1.0 - shiftOscillation * 0.20;
+    const gainMod = 1.0 - shiftOscillation * 0.30;
 
     // --- 2. Crossfade gains ---
     // Throttle crossfade: on ↔ off

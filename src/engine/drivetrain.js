@@ -31,7 +31,7 @@ const SHIFT_DURATION = 150;      // ms — clutch disengaged during shift
 const OSCILLATION_FREQ = 6;             // Hz — drivetrain natural frequency (lower = more visible on tacho)
 const OSCILLATION_DECAY_TAU = 0.35;     // seconds — exponential decay time constant
 const OSCILLATION_DURATION = 1.0;       // seconds — total oscillation window
-const OSCILLATION_RPM_SCALE = 0.30;     // fraction of RPM delta that becomes oscillation amplitude
+const OSCILLATION_RPM_SCALE = 0.45;     // fraction of RPM delta that becomes oscillation amplitude
 
 // Simplified torque curve (RPM → Nm at wide-open throttle)
 const TORQUE_CURVE = [
