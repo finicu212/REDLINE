@@ -84,6 +84,26 @@ export class Drivetrain {
     return this.gear === 0 ? 'N' : String(this.gear);
   }
 
+  /** Snapshot of all drivetrain state for audio + debug. */
+  getState() {
+    const inGear = !this.isNeutral && this.gear > 0;
+    const totalRatio = inGear ? GEAR_RATIOS[this.gear] * FINAL_DRIVE : 0;
+    return {
+      rpm: this.rpm,
+      speed: this.speed,
+      gear: this.gear,
+      gearLabel: this.gearLabel,
+      shifting: this._shifting,
+      revLimiterActive: this.revLimiterActive,
+      throttle: false, // set by caller
+      totalRatio,
+      effectiveInertia: inGear
+        ? ENGINE_INERTIA + VEHICLE_INERTIA / (totalRatio * totalRatio)
+        : ENGINE_INERTIA,
+      torqueNm: inGear ? lerpTorqueCurve(this.rpm) : 0,
+    };
+  }
+
   shiftUp() {
     if (this._shifting) return false;
     if (this.gear >= 5) return false;

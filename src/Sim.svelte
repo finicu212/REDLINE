@@ -4,6 +4,7 @@
   import CylinderBank from './CylinderBank.svelte';
   import Odometer from './Odometer.svelte';
   import GearIndicator from './GearIndicator.svelte';
+  import DebugOverlay from './DebugOverlay.svelte';
   import { Drivetrain } from './engine/drivetrain.js';
 
   let { config } = $props();
@@ -13,6 +14,8 @@
   let gearLabel = $state('N');
   let revving = $state(false);
   let showHint = $state(true);
+  let showDebug = $state(false);
+  let debugState = $state(null);
 
   /** @type {import('./engine/audio.js').EngineAudio} */
   const engineAudio = config.engineAudio;
@@ -31,6 +34,9 @@
     if (e.code === 'ArrowDown' && !e.repeat) {
       e.preventDefault();
       drivetrain.shiftDown();
+    }
+    if (e.code === 'Backquote' && !e.repeat) {
+      showDebug = !showDebug;
     }
   }
 
@@ -63,11 +69,25 @@
       lastTime = now;
 
       drivetrain.update(dt, revving);
-      rpm = drivetrain.rpm;
-      speed = drivetrain.speed;
-      gearLabel = drivetrain.gearLabel;
 
-      if (engineAudio) engineAudio.setRPM(rpm, revving);
+      const state = drivetrain.getState();
+      state.throttle = revving;
+
+      rpm = state.rpm;
+      speed = state.speed;
+      gearLabel = state.gearLabel;
+
+      if (engineAudio) engineAudio.setEngineState(state);
+
+      if (showDebug) {
+        debugState = {
+          ...state,
+          dt,
+          bandGains: engineAudio ? { ...engineAudio.debugBandGains } : {},
+          playbackRate: engineAudio ? engineAudio.debugPlaybackRate : 0,
+        };
+      }
+
       animFrameId = requestAnimationFrame(loop);
     }
     animFrameId = requestAnimationFrame(loop);
@@ -88,6 +108,10 @@
     <CylinderBank {rpm} cylinders={config.cylinders} layout={config.layout} />
   </div>
 
+  {#if showDebug && debugState}
+    <DebugOverlay data={debugState} />
+  {/if}
+
   <div class="hud">
     <div class="hud-left">
       <Odometer {speed} />
@@ -95,7 +119,7 @@
 
     <div class="hud-center">
       {#if showHint}
-        <p class="hint">HOLD SPACE / CLICK to rev &middot; UP/DOWN to shift</p>
+        <p class="hint">HOLD SPACE / CLICK to rev &middot; UP/DOWN to shift &middot; ` for debug</p>
       {/if}
       <GearIndicator gear={gearLabel} {speed} />
     </div>
@@ -113,6 +137,7 @@
     display: flex;
     flex-direction: column;
     user-select: none;
+    position: relative;
   }
 
   .cylinder-area {
