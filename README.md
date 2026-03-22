@@ -2,6 +2,8 @@
 
 Browser-based engine simulator with realistic drivetrain physics, layered audio synthesis, and an interactive manual transmission. Runs on desktop and mobile.
 
+**[Try it live](https://redline.finicu.workers.dev)**
+
 ## Features
 
 - **Drivetrain physics** — torque curve interpolation, constant-power throttle model (BeamNG-style), angular acceleration, rev limiter with fuel-cut hysteresis, over-rev protection on downshifts, and post-shift drivetrain oscillation. Honda S2000 AP1 gearbox.
