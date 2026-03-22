@@ -233,7 +233,7 @@
 
   @media (max-width: 600px) {
     .tachometer-container {
-      width: clamp(100px, 22vmin, 160px);
+      width: clamp(140px, 40vmin, 220px);
     }
   }
 </style>

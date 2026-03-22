@@ -241,12 +241,12 @@
   });
 </script>
 
-<div class="sim">
+<div class="sim" class:sim-touch={isTouchDevice}>
   <div class="cylinder-area">
     <CylinderBank {rpm} cylinders={config.cylinders} layout={config.layout} {throttle} />
   </div>
 
-  <!-- Throttle cylinder indicator -->
+  <!-- Throttle bar -->
   <div class="throttle-cyl">
     <div class="throttle-cyl-fill" style="height: {throttle * 100}%"></div>
     <span class="throttle-cyl-label">{(throttle * 100).toFixed(0)}</span>
@@ -259,12 +259,14 @@
   <!-- On-screen touch controls (visible on touch devices) -->
   {#if isTouchDevice}
     <div class="touch-controls">
-      <button class="touch-btn brake-btn"
-        ontouchstart={onBrakeStart}
-        ontouchend={onBrakeEnd}
-        ontouchcancel={onBrakeEnd}
-      >BRK</button>
-      <div class="shift-btns">
+      <div class="touch-left">
+        <button class="touch-btn brake-btn"
+          ontouchstart={onBrakeStart}
+          ontouchend={onBrakeEnd}
+          ontouchcancel={onBrakeEnd}
+        >BRK</button>
+      </div>
+      <div class="touch-right">
         <button class="touch-btn shift-up-btn"
           ontouchstart={onShiftUpTouch}
         >&uarr;</button>
@@ -275,6 +277,10 @@
     </div>
   {/if}
 
+  <!--
+    Desktop: bottom bar with odometer | gear | tachometer
+    Mobile:  tachometer centered in main area, gear below it, bottom bar minimal
+  -->
   <div class="hud">
     <div class="hud-left">
       <Odometer {speed} />
@@ -314,6 +320,7 @@
     justify-content: center;
   }
 
+  /* --- Desktop HUD: bottom bar with odometer | gear | tachometer --- */
   .hud {
     height: clamp(140px, 28vh, 280px);
     display: flex;
@@ -358,6 +365,7 @@
     100% { opacity: 0; }
   }
 
+  /* --- Throttle bar (desktop: left edge, mobile: left column) --- */
   .throttle-cyl {
     position: absolute;
     left: 18px;
@@ -397,11 +405,23 @@
     inset: 0;
     pointer-events: none;
     z-index: 60;
+    display: flex;
+    justify-content: space-between;
+    align-items: stretch;
+  }
+
+  .touch-left,
+  .touch-right {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 12px;
+    padding: 10px;
+    pointer-events: none;
   }
 
   .touch-btn {
     pointer-events: auto;
-    position: absolute;
     font-family: 'Share Tech Mono', monospace;
     font-size: 1.1rem;
     font-weight: bold;
@@ -409,11 +429,14 @@
     border-radius: 8px;
     background: rgba(20, 20, 30, 0.6);
     color: rgba(255, 255, 255, 0.5);
+    width: 56px;
+    height: 56px;
     padding: 0;
     display: flex;
     align-items: center;
     justify-content: center;
     -webkit-tap-highlight-color: transparent;
+    flex-shrink: 0;
   }
 
   .touch-btn:active {
@@ -422,11 +445,6 @@
   }
 
   .brake-btn {
-    left: 10px;
-    bottom: clamp(140px, 28vh, 280px);
-    width: 56px;
-    height: 56px;
-    margin-bottom: 12px;
     font-size: 0.8rem;
     color: rgba(100, 160, 255, 0.6);
     border-color: rgba(100, 160, 255, 0.25);
@@ -437,42 +455,75 @@
     color: #6af;
   }
 
-  .shift-btns {
-    position: absolute;
-    right: 10px;
-    top: 50%;
-    transform: translateY(-50%);
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    pointer-events: auto;
-  }
-
-  .shift-up-btn,
-  .shift-down-btn {
-    position: static;
-    width: 56px;
-    height: 56px;
-  }
-
-  /* --- Mobile portrait: compact HUD --- */
+  /* =================================================================
+     MOBILE: tachometer centered + gear below it, controls on sides
+     ================================================================= */
   @media (max-width: 600px) {
-    .hud {
-      height: clamp(100px, 22vh, 160px);
-      padding: 0.4rem;
+    /* Restructure: cylinders top, tachometer+gear center, minimal bottom */
+    .sim-touch {
+      /* On mobile touch, reorder via grid */
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      grid-template-columns: 1fr;
+    }
+
+    .sim-touch .cylinder-area {
+      grid-row: 1;
+      flex: none;
+      padding: 0.5rem 0;
+      min-height: 80px;
+      max-height: 20vh;
+    }
+
+    /* Move tachometer from hud-right to center of the screen */
+    .sim-touch .hud {
+      grid-row: 2;
+      height: auto;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 0.5rem;
       gap: 0.4rem;
     }
 
-    .hud-left {
+    .sim-touch .hud-left {
       display: none;
     }
 
-    .throttle-cyl {
-      display: none;
+    .sim-touch .hud-right {
+      order: -1;
+      align-items: center;
     }
 
-    .brake-btn {
-      bottom: clamp(100px, 22vh, 160px);
+    .sim-touch .hud-center {
+      flex: none;
+    }
+
+    /* Throttle bar: reposition to left column, taller on mobile */
+    .sim-touch .throttle-cyl {
+      left: 12px;
+      top: 50%;
+      height: 30vh;
+      width: 16px;
+    }
+
+    .sim-touch .throttle-cyl-label {
+      font-size: 0.5rem;
+    }
+
+    /* Touch buttons: bigger tap targets on mobile */
+    .touch-left,
+    .touch-right {
+      padding: 0 8px;
+    }
+
+    .touch-btn {
+      width: 52px;
+      height: 52px;
+    }
+
+    .hint {
+      font-size: 0.55rem;
     }
   }
 </style>
