@@ -20,6 +20,7 @@
   let spaceHeld = $state(false);
   let braking = $state(false);
   let showHint = $state(true);
+  let showControls = $state(false);
   let isTouchDevice = $state(false);
   let showDebug = $state(true);
   let debugState = $state(null);
@@ -283,10 +284,40 @@
 
     <div class="hud-center">
       {#if showHint}
-        <p class="hint">{isTouchDevice ? 'TOUCH to rev \u00b7 buttons to shift/brake' : 'SPACE rev \u00b7 DRAG throttle \u00b7 S/B brake \u00b7 UP/DOWN shift \u00b7 ` debug'}</p>
+        <p class="hint">{isTouchDevice ? 'DRAG UP to rev' : 'SPACE / DRAG UP to rev'}</p>
       {/if}
       <GearIndicator gear={gearLabel} {speed} />
     </div>
+
+    <button class="info-btn" onclick={() => showControls = !showControls}>?</button>
+
+    {#if showControls}
+      <div class="controls-popup" onclick={() => showControls = false}>
+        <div class="controls-card" onclick={(e) => e.stopPropagation()}>
+          <div class="controls-title">CONTROLS</div>
+          <div class="controls-section">
+            <div class="controls-heading">Keyboard + Mouse</div>
+            <div class="controls-row"><span class="controls-key">SPACE</span> Full throttle</div>
+            <div class="controls-row"><span class="controls-key">CLICK+DRAG UP</span> Proportional throttle</div>
+            <div class="controls-row"><span class="controls-key">{'\u2191'} {'\u2193'}</span> Shift up / down</div>
+            <div class="controls-row"><span class="controls-key">S / B</span> Brake</div>
+            <div class="controls-row"><span class="controls-key">`</span> Toggle debug</div>
+          </div>
+          <div class="controls-section">
+            <div class="controls-heading">Touch</div>
+            <div class="controls-row"><span class="controls-key">DRAG UP</span> Throttle</div>
+            <div class="controls-row"><span class="controls-key">{'\u2191'} {'\u2193'} BRK</span> On-screen buttons</div>
+          </div>
+          <div class="controls-section">
+            <div class="controls-heading">Gamepad</div>
+            <div class="controls-row"><span class="controls-key">RT</span> Throttle</div>
+            <div class="controls-row"><span class="controls-key">LT</span> Brake</div>
+            <div class="controls-row"><span class="controls-key">RB / LB</span> Shift up / down</div>
+          </div>
+          <button class="controls-close" onclick={() => showControls = false}>CLOSE</button>
+        </div>
+      </div>
+    {/if}
 
     <div class="hud-right">
       <Tachometer {rpm} />
@@ -358,6 +389,103 @@
     0% { opacity: 1; }
     70% { opacity: 1; }
     100% { opacity: 0; }
+  }
+
+  /* --- Info / controls popup --- */
+  .info-btn {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 1px solid var(--c-border-subtle);
+    background: var(--c-bg-overlay);
+    color: var(--c-text-ghost);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.8rem;
+    cursor: pointer;
+    z-index: 90;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .info-btn:hover {
+    border-color: var(--c-text-muted);
+    color: var(--c-text-muted);
+  }
+
+  .controls-popup {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .controls-card {
+    background: var(--c-bg-panel);
+    border: 1px solid var(--c-border-subtle);
+    border-radius: 8px;
+    padding: 1.2rem 1.5rem;
+    font-family: 'Share Tech Mono', monospace;
+    max-width: min(360px, 90vw);
+    width: 100%;
+  }
+
+  .controls-title {
+    font-size: 0.7rem;
+    color: var(--c-text-ghost);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    margin-bottom: 0.8rem;
+  }
+
+  .controls-section {
+    margin-bottom: 0.7rem;
+  }
+
+  .controls-heading {
+    font-size: 0.6rem;
+    color: var(--c-text-muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 0.3rem;
+  }
+
+  .controls-row {
+    font-size: 0.65rem;
+    color: var(--c-text-dim);
+    padding: 0.15rem 0;
+  }
+
+  .controls-key {
+    color: var(--c-text-secondary);
+    margin-right: 0.4rem;
+  }
+
+  .controls-close {
+    margin-top: 0.5rem;
+    width: 100%;
+    padding: 0.4rem;
+    background: transparent;
+    border: 1px solid var(--c-border-subtle);
+    border-radius: 4px;
+    color: var(--c-text-ghost);
+    font-family: inherit;
+    font-size: 0.6rem;
+    letter-spacing: 0.15em;
+    cursor: pointer;
+  }
+
+  .controls-close:hover {
+    border-color: var(--c-text-muted);
+    color: var(--c-text-muted);
   }
 
   /* --- Throttle bar (desktop: left edge, mobile: left column) --- */
