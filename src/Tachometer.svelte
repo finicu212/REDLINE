@@ -1,6 +1,11 @@
 <script>
   import { onMount } from 'svelte';
   import { TACHO_MAX_RPM, TACHO_REDLINE_RPM } from './engine/constants.js';
+  import {
+    tachoBlack, tachoDark, tachoWhite, tachoDim,
+    tachoNeedle, tachoNeedleGlow, tachoRed, tachoRedDim,
+    tachoTickMid, tachoInnerRing, tachoGrid,
+  } from './engine/tokens.js';
 
   let { rpm = 850 } = $props();
 
@@ -26,15 +31,15 @@
     return START_ANGLE - (Math.min(r, DIAL_MAX) / DIAL_MAX) * SWEEP;
   }
 
-  // Honda EK color palette
-  const EK_BLACK = '#0a0a0a';
-  const EK_DARK = '#1a1a1a';
-  const EK_WHITE = '#e8e8e8';
-  const EK_DIM = '#888';
-  const EK_NEEDLE = '#e8a020';      // warm yellow-orange
-  const EK_NEEDLE_GLOW = 'rgba(232, 160, 32, 0.5)';
-  const EK_RED = '#cc2020';
-  const EK_RED_DIM = 'rgba(200, 30, 30, 0.25)';
+  // Honda EK color palette — from tokens
+  const EK_BLACK = tachoBlack;
+  const EK_DARK = tachoDark;
+  const EK_WHITE = tachoWhite;
+  const EK_DIM = tachoDim;
+  const EK_NEEDLE = tachoNeedle;
+  const EK_NEEDLE_GLOW = tachoNeedleGlow;
+  const EK_RED = tachoRed;
+  const EK_RED_DIM = tachoRedDim;
 
   function drawTacho(ctx, dt) {
     // Smooth the needle: chase target RPM with limited speed
@@ -53,7 +58,7 @@
     ctx.arc(CENTER, CENTER, RADIUS + 4, 0, Math.PI * 2);
     ctx.fillStyle = EK_DARK;
     ctx.fill();
-    ctx.strokeStyle = '#333';
+    ctx.strokeStyle = tachoGrid;
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
@@ -89,7 +94,7 @@
       ctx.beginPath();
       ctx.moveTo(CENTER + inner * cos, CENTER - inner * sin);
       ctx.lineTo(CENTER + outer * cos, CENTER - outer * sin);
-      ctx.strokeStyle = tickRPM >= TACHO_REDLINE_RPM ? EK_RED : '#555';
+      ctx.strokeStyle = tickRPM >= TACHO_REDLINE_RPM ? EK_RED : tachoTickMid;
       ctx.lineWidth = 1;
       ctx.stroke();
     }
@@ -160,7 +165,7 @@
     // Center cap (dark with bright rim)
     ctx.beginPath();
     ctx.arc(CENTER, CENTER, 7, 0, Math.PI * 2);
-    ctx.fillStyle = '#222';
+    ctx.fillStyle = tachoInnerRing;
     ctx.fill();
     ctx.strokeStyle = EK_NEEDLE;
     ctx.lineWidth = 1.5;

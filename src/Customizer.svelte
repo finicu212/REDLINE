@@ -64,13 +64,13 @@
   .title {
     font-size: 4rem;
     letter-spacing: 0.3em;
-    color: #ff4020;
-    text-shadow: 0 0 30px rgba(255, 64, 32, 0.4);
+    color: var(--c-accent);
+    text-shadow: 0 0 30px var(--c-accent-glow);
   }
 
   .subtitle {
     font-size: 1rem;
-    color: #666;
+    color: var(--c-text-subtle);
     letter-spacing: 0.2em;
     text-transform: uppercase;
   }
@@ -83,7 +83,7 @@
 
   .label {
     font-size: 0.8rem;
-    color: #888;
+    color: var(--c-text-dim);
     letter-spacing: 0.15em;
     text-transform: uppercase;
   }
@@ -94,9 +94,9 @@
   }
 
   .toggle-row button {
-    background: #1a1a2e;
-    border: 1px solid #333;
-    color: #888;
+    background: var(--c-bg-panel);
+    border: 1px solid var(--c-border-subtle);
+    color: var(--c-text-dim);
     padding: 0.5rem 1.5rem;
     font-family: inherit;
     font-size: 0.9rem;
@@ -105,8 +105,8 @@
   }
 
   .toggle-row button:hover:not(:disabled) {
-    border-color: #555;
-    color: #ccc;
+    border-color: var(--c-border-focus);
+    color: var(--c-text-secondary);
   }
 
   .toggle-row button:disabled {
@@ -115,16 +115,16 @@
   }
 
   .toggle-row button.active {
-    border-color: #ff4020;
-    color: #ff4020;
-    background: rgba(255, 64, 32, 0.1);
+    border-color: var(--c-accent);
+    color: var(--c-accent);
+    background: var(--c-accent-dim);
   }
 
   .start-btn {
     margin-top: 1rem;
     background: transparent;
-    border: 2px solid #ff4020;
-    color: #ff4020;
+    border: 2px solid var(--c-accent);
+    color: var(--c-accent);
     padding: 1rem 3rem;
     font-family: inherit;
     font-size: 1.2rem;
@@ -134,9 +134,9 @@
   }
 
   .start-btn:hover {
-    background: #ff4020;
-    color: #0f0f1a;
-    box-shadow: 0 0 30px rgba(255, 64, 32, 0.4);
+    background: var(--c-accent);
+    color: var(--c-bg-deep);
+    box-shadow: 0 0 30px var(--c-accent-glow);
   }
 
   .loading {
@@ -149,20 +149,20 @@
 
   .loading p {
     font-size: 0.8rem;
-    color: #666;
+    color: var(--c-text-subtle);
   }
 
   .progress-bar {
     width: 200px;
     height: 4px;
-    background: #1a1a2e;
+    background: var(--c-bg-panel);
     border-radius: 2px;
     overflow: hidden;
   }
 
   .progress-fill {
     height: 100%;
-    background: #ff4020;
+    background: var(--c-accent);
     transition: width 0.2s;
   }
 </style>

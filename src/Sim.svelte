@@ -205,7 +205,7 @@
 
   .hint {
     font-size: clamp(0.5rem, 1.2vw, 0.7rem);
-    color: #555;
+    color: var(--c-text-ghost);
     letter-spacing: 0.1em;
     animation: fade 4s forwards;
   }

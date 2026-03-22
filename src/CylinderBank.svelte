@@ -1,5 +1,10 @@
 <script>
   import { onMount } from 'svelte';
+  import {
+    cylIdle, cylPower, cylPowerStroke, cylPowerGlow,
+    cylBrake, cylBrakeStroke, cylBrakeGlow,
+    cylFiringOn, cylFiringOff, borderMid,
+  } from './engine/tokens.js';
 
   let { rpm = 850, cylinders = 4, layout = 'inline', throttle = 0 } = $props();
 
@@ -18,14 +23,14 @@
   const CYL_H = 60;
   const V_GAP = 80;
 
-  // Colors
-  const COL_IDLE = '#2a2a3e';
-  const COL_POWER = '#ff4020';       // red-orange: combustion under load
-  const COL_POWER_STROKE = '#ff6040';
-  const COL_POWER_GLOW = 'rgba(255, 64, 32, 0.8)';
-  const COL_BRAKE = '#3a6fff';        // blue: compression/engine braking
-  const COL_BRAKE_STROKE = '#5080ff';
-  const COL_BRAKE_GLOW = 'rgba(58, 111, 255, 0.6)';
+  // Colors — from tokens
+  const COL_IDLE = cylIdle;
+  const COL_POWER = cylPower;
+  const COL_POWER_STROKE = cylPowerStroke;
+  const COL_POWER_GLOW = cylPowerGlow;
+  const COL_BRAKE = cylBrake;
+  const COL_BRAKE_STROKE = cylBrakeStroke;
+  const COL_BRAKE_GLOW = cylBrakeGlow;
 
   function getCylinderPositions(count, lay) {
     const p = [];
@@ -44,7 +49,7 @@
   }
 
   function getFiringColor(firing) {
-    if (!firing) return { fill: COL_IDLE, stroke: '#444', glow: '' };
+    if (!firing) return { fill: COL_IDLE, stroke: borderMid, glow: '' };
     if (throttle > 0.1) return { fill: COL_POWER, stroke: COL_POWER_STROKE, glow: `filter: drop-shadow(0 0 12px ${COL_POWER_GLOW})` };
     return { fill: COL_BRAKE, stroke: COL_BRAKE_STROKE, glow: `filter: drop-shadow(0 0 10px ${COL_BRAKE_GLOW})` };
   }
@@ -97,7 +102,7 @@
         x="0"
         y="4"
         text-anchor="middle"
-        fill={firingStates[i] ? '#fff' : '#666'}
+        fill={firingStates[i] ? cylFiringOn : cylFiringOff}
         font-size="12"
         font-family="Share Tech Mono, monospace"
       >
