@@ -20,15 +20,17 @@
   let spaceHeld = $state(false);
   let braking = $state(false);
   let showHint = $state(true);
+  let isTouchDevice = $state(false);
   let showDebug = $state(true);
   let debugState = $state(null);
 
   // --- Touch state ---
+  // Touch anywhere on the main area = throttle (Y maps to 0–1, lower = more)
+  // Visible on-screen buttons handle shift up/down and brake
   let touchThrottle = $state(0);
   let touchBraking = $state(false);
-  const SWIPE_THRESHOLD = 40;     // px to trigger a gear shift swipe
-  /** @type {Map<number, {startY: number, zone: 'top'|'bottom', shifted: boolean}>} */
-  const activeTouches = new Map();
+  /** @type {Set<number>} touch identifiers currently providing throttle */
+  const throttleTouches = new Set();
 
   // --- Gamepad state ---
   let gamepadThrottle = $state(0);
@@ -92,65 +94,50 @@
   }
 
   // --- Touch handlers ---
-  // Bottom half: throttle zone — Y position maps to throttle (bottom=100%, mid=0%)
-  // Top half: swipe up = shift up, swipe down = shift down
+  // Touches on the main sim area = throttle (Y position: top=0%, bottom=100%)
+  // On-screen buttons handle shift and brake via their own touch events
+
+  function touchYToThrottle(clientY) {
+    const h = window.innerHeight;
+    return Math.max(0, Math.min(1, clientY / h));
+  }
 
   function onTouchStart(e) {
+    // Ignore touches that land on a touch-btn (they handle themselves)
+    if (e.target.closest('.touch-btn')) return;
     e.preventDefault();
     showHint = false;
-    const midY = window.innerHeight / 2;
+    isTouchDevice = true;
 
     for (const touch of e.changedTouches) {
-      const zone = touch.clientY >= midY ? 'bottom' : 'top';
-      activeTouches.set(touch.identifier, {
-        startY: touch.clientY,
-        zone,
-        shifted: false,
-      });
-
-      if (zone === 'bottom') {
-        // Map Y within bottom half: mid-screen = 0%, bottom edge = 100%
-        const frac = (touch.clientY - midY) / midY;
-        touchThrottle = Math.max(0, Math.min(1, frac));
-      }
+      throttleTouches.add(touch.identifier);
+      touchThrottle = touchYToThrottle(touch.clientY);
     }
   }
 
   function onTouchMove(e) {
+    if (e.target.closest('.touch-btn')) return;
     e.preventDefault();
-    const midY = window.innerHeight / 2;
 
     for (const touch of e.changedTouches) {
-      const info = activeTouches.get(touch.identifier);
-      if (!info) continue;
-
-      if (info.zone === 'bottom') {
-        // Update analog throttle from current Y
-        const frac = (touch.clientY - midY) / midY;
-        touchThrottle = Math.max(0, Math.min(1, frac));
-      } else if (info.zone === 'top' && !info.shifted) {
-        // Check for swipe gesture
-        const dy = touch.clientY - info.startY;
-        if (Math.abs(dy) >= SWIPE_THRESHOLD) {
-          if (dy < 0) drivetrain.shiftUp();
-          else drivetrain.shiftDown();
-          info.shifted = true;
-        }
+      if (throttleTouches.has(touch.identifier)) {
+        touchThrottle = touchYToThrottle(touch.clientY);
       }
     }
   }
 
   function onTouchEnd(e) {
     for (const touch of e.changedTouches) {
-      activeTouches.delete(touch.identifier);
+      throttleTouches.delete(touch.identifier);
     }
-    // If no bottom-half touches remain, release throttle
-    let hasBottomTouch = false;
-    for (const info of activeTouches.values()) {
-      if (info.zone === 'bottom') { hasBottomTouch = true; break; }
-    }
-    if (!hasBottomTouch) touchThrottle = 0;
+    if (throttleTouches.size === 0) touchThrottle = 0;
   }
+
+  // Button handlers for on-screen controls
+  function onShiftUpTouch(e) { e.preventDefault(); drivetrain.shiftUp(); }
+  function onShiftDownTouch(e) { e.preventDefault(); drivetrain.shiftDown(); }
+  function onBrakeStart(e) { e.preventDefault(); touchBraking = true; }
+  function onBrakeEnd(e) { e.preventDefault(); touchBraking = false; }
 
   // --- Gamepad polling (called each frame) ---
   function pollGamepad() {
@@ -177,6 +164,10 @@
   }
 
   onMount(() => {
+    // Detect touch device and default debug off
+    isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    if (isTouchDevice) showDebug = false;
+
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
     window.addEventListener('mousedown', onMouseDown);
@@ -265,14 +256,33 @@
     <DebugOverlay data={debugState} />
   {/if}
 
+  <!-- On-screen touch controls (visible on touch devices) -->
+  {#if isTouchDevice}
+    <div class="touch-controls">
+      <button class="touch-btn brake-btn"
+        ontouchstart={onBrakeStart}
+        ontouchend={onBrakeEnd}
+        ontouchcancel={onBrakeEnd}
+      >BRK</button>
+      <div class="shift-btns">
+        <button class="touch-btn shift-up-btn"
+          ontouchstart={onShiftUpTouch}
+        >&uarr;</button>
+        <button class="touch-btn shift-down-btn"
+          ontouchstart={onShiftDownTouch}
+        >&darr;</button>
+      </div>
+    </div>
+  {/if}
+
   <div class="hud">
     <div class="hud-left">
       <Odometer {speed} />
     </div>
 
     <div class="hud-center">
-      {#if showHint || showDebug}
-        <p class="hint" class:hint-persist={showDebug}>SPACE / TOUCH bottom &middot; DRAG up throttle &middot; SWIPE top shift &middot; S/B brake &middot; UP/DOWN shift &middot; GAMEPAD RT/LT/RB/LB &middot; ` debug</p>
+      {#if showHint}
+        <p class="hint">{isTouchDevice ? 'TOUCH to rev \u00b7 buttons to shift/brake' : 'SPACE rev \u00b7 DRAG throttle \u00b7 S/B brake \u00b7 UP/DOWN shift \u00b7 ` debug'}</p>
       {/if}
       <GearIndicator gear={gearLabel} {speed} />
     </div>
@@ -287,22 +297,25 @@
   .sim {
     width: 100vw;
     height: 100vh;
+    height: 100dvh;
     display: flex;
     flex-direction: column;
     user-select: none;
     touch-action: none;
     position: relative;
+    overflow: hidden;
   }
 
   .cylinder-area {
     flex: 1;
+    min-height: 0;
     display: flex;
     align-items: center;
     justify-content: center;
   }
 
   .hud {
-    height: clamp(160px, 32vh, 280px);
+    height: clamp(140px, 28vh, 280px);
     display: flex;
     align-items: flex-end;
     justify-content: space-between;
@@ -335,11 +348,8 @@
     color: var(--c-text-ghost);
     letter-spacing: 0.1em;
     animation: fade 4s forwards;
-  }
-
-  .hint-persist {
-    animation: none;
-    opacity: 1;
+    text-align: center;
+    max-width: 80vw;
   }
 
   @keyframes fade {
@@ -379,5 +389,90 @@
     font-family: 'Share Tech Mono', monospace;
     font-size: 0.55rem;
     color: #777;
+  }
+
+  /* --- On-screen touch controls --- */
+  .touch-controls {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 60;
+  }
+
+  .touch-btn {
+    pointer-events: auto;
+    position: absolute;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 1.1rem;
+    font-weight: bold;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    background: rgba(20, 20, 30, 0.6);
+    color: rgba(255, 255, 255, 0.5);
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .touch-btn:active {
+    background: rgba(255, 255, 255, 0.15);
+    color: #fff;
+  }
+
+  .brake-btn {
+    left: 10px;
+    bottom: clamp(140px, 28vh, 280px);
+    width: 56px;
+    height: 56px;
+    margin-bottom: 12px;
+    font-size: 0.8rem;
+    color: rgba(100, 160, 255, 0.6);
+    border-color: rgba(100, 160, 255, 0.25);
+  }
+
+  .brake-btn:active {
+    background: rgba(100, 160, 255, 0.2);
+    color: #6af;
+  }
+
+  .shift-btns {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    pointer-events: auto;
+  }
+
+  .shift-up-btn,
+  .shift-down-btn {
+    position: static;
+    width: 56px;
+    height: 56px;
+  }
+
+  /* --- Mobile portrait: compact HUD --- */
+  @media (max-width: 600px) {
+    .hud {
+      height: clamp(100px, 22vh, 160px);
+      padding: 0.4rem;
+      gap: 0.4rem;
+    }
+
+    .hud-left {
+      display: none;
+    }
+
+    .throttle-cyl {
+      display: none;
+    }
+
+    .brake-btn {
+      bottom: clamp(100px, 22vh, 160px);
+    }
   }
 </style>

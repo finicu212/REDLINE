@@ -230,4 +230,10 @@
   .tachometer {
     display: block;
   }
+
+  @media (max-width: 600px) {
+    .tachometer-container {
+      width: clamp(100px, 22vmin, 160px);
+    }
+  }
 </style>
