@@ -3,7 +3,7 @@
   import Sim from './Sim.svelte';
 
   let screen = $state('customizer');
-  let engineConfig = $state({ cylinders: 4, layout: 'inline' });
+  let engineConfig = $state({});
 
   function handleStart(config) {
     engineConfig = config;

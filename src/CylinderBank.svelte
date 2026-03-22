@@ -11,12 +11,15 @@
   const FIRING_ORDERS = {
     4: [0, 2, 3, 1],
     6: [0, 3, 1, 4, 2, 5],
+    8: [0, 5, 3, 6, 1, 4, 7, 2],  // cross-plane V8
   };
 
-  let firingStates = $state([false, false, false, false, false, false]);
+  let firingStates = $state(new Array(8).fill(false));
 
   let positions = $derived(getCylinderPositions(cylinders, layout));
-  let svgWidth = $derived(layout === 'v' && cylinders === 6 ? 280 : 30 + cylinders * 70);
+  let svgWidth = $derived(
+    layout === 'v' ? 30 + (cylinders / 2) * 70 : 30 + cylinders * 70
+  );
   let svgHeight = $derived(layout === 'v' ? PAD * 2 + CYL_H + V_GAP : PAD * 2 + CYL_H);
 
   const PAD = 34;
@@ -48,9 +51,11 @@
 
   function getCylinderPositions(count, lay) {
     const p = [];
-    if (lay === 'v' && count === 6) {
+    if (lay === 'v' && count >= 6) {
+      // V-layout: interleave left/right bank cylinders
+      const perBank = count / 2;
       const centerY = PAD + CYL_H / 2 + V_GAP / 2;
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < perBank; i++) {
         p.push({ x: 60 + i * 70, y: centerY - V_GAP / 2, angle: -12 });
         p.push({ x: 60 + i * 70, y: centerY + V_GAP / 2, angle: 12 });
       }

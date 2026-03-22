@@ -15,57 +15,48 @@
  *   - trany_power_high.wav: transmission whine pitched by speed
  *   - tw_off* files: transmission decel layer
  *   - Shift thud: synthesized transient
+ *   - Turbo whine: sample-based or synth fallback, pitched by spool
+ *   - BOV: blow-off valve sample or synth noise burst
+ *
+ * Accepts an optional profile (from profiles.js) for per-engine audio paths,
+ * RPM limits, exhaust params, and cylinder count.
  */
 
-import { IDLE_RPM, REDLINE_RPM, normalizeRPM } from './constants.js';
+import { IDLE_RPM, REDLINE_RPM, normalizeRPM, normalizeRPMFor } from './constants.js';
 
 // Samples recorded at 1000 RPM
 const SAMPLE_RPM = 1000;
 // Pitch factor: cents per RPM deviation from SAMPLE_RPM
 const RPM_PITCH_FACTOR = 0.2;
 
-// --- Sample definitions ---
+// --- Default sample definitions (BAC engine, used when no profile) ---
 
-// Core engine samples (all 4 play simultaneously, gains modulated by throttle × RPM)
-const ENGINE_SAMPLES = {
+const DEFAULT_ENGINE_SAMPLES = {
   on_low:  '/audio/BAC_Mono_onlow.wav',
   on_high: '/audio/BAC_Mono_onhigh.wav',
   off_low: '/audio/BAC_Mono_offlow.wav',
   off_high: '/audio/BAC_Mono_offhigh.wav',
 };
 
-// Additional off-throttle samples (mid frequencies not in 2-layer model)
-const ENGINE_EXTRA_OFF = {
+const DEFAULT_ENGINE_EXTRA_OFF = {
   off_mid:      '/audio/BAC_Mono_offmid.wav',
   off_veryhigh: '/audio/BAC_Mono_offveryhigh.wav',
 };
 
-// Transmission decel layers
-const TRANY_DECEL = [
+const DEFAULT_TRANY_DECEL = [
   { band: 'verylow', file: '/audio/tw_offverylow_4.wav' },
   { band: 'low',     file: '/audio/tw_offlow_4.wav' },
   { band: 'lowmid',  file: '/audio/tw_offlowmid_4.wav' },
   { band: 'high',    file: '/audio/tw_offhigh_4.wav' },
 ];
 
-const REV_FILE = '/audio/REV.wav';
-const LIMITER_FILE = '/audio/limiter.wav';
-const TRANY_FILE = '/audio/trany_power_high.wav';
+const DEFAULT_REV_FILE = '/audio/REV.wav';
+const DEFAULT_LIMITER_FILE = '/audio/limiter.wav';
+const DEFAULT_TRANY_FILE = '/audio/trany_power_high.wav';
 
-// Turbo sample placeholders — replace with real recordings
-const TURBO_WHINE_FILE = '/audio/turbo_whine.wav';    // looping turbo spool whine
-const TURBO_BOV_FILE = '/audio/turbo_bov.wav';         // blow-off valve hiss/pssh
-
-const ALL_FILES = [
-  ...Object.values(ENGINE_SAMPLES).map(file => ({ file })),
-  ...Object.values(ENGINE_EXTRA_OFF).map(file => ({ file })),
-  ...TRANY_DECEL,
-  { file: REV_FILE },
-  { file: LIMITER_FILE },
-  { file: TRANY_FILE },
-  { file: TURBO_WHINE_FILE },
-  { file: TURBO_BOV_FILE },
-];
+// Turbo sample defaults — replace with real recordings
+const DEFAULT_TURBO_WHINE_FILE = '/audio/turbo_whine.wav';
+const DEFAULT_TURBO_BOV_FILE = '/audio/turbo_bov.wav';
 
 // RPM crossfade zone (matching markeasting)
 const RPM_XFADE_LOW = 3000;
@@ -75,15 +66,62 @@ const RPM_XFADE_HIGH = 6500;
 const REV_BLEND_START = 0.995;
 const REV_BLEND_END = 0.999;
 
+// --- Build file lists from profile or defaults ---
+
+function buildFileConfig(profile) {
+  if (!profile || !profile.audio) {
+    return {
+      engineSamples: DEFAULT_ENGINE_SAMPLES,
+      engineExtraOff: DEFAULT_ENGINE_EXTRA_OFF,
+      tranyDecel: DEFAULT_TRANY_DECEL,
+      revFile: DEFAULT_REV_FILE,
+      limiterFile: DEFAULT_LIMITER_FILE,
+      tranyFile: DEFAULT_TRANY_FILE,
+      turboWhineFile: DEFAULT_TURBO_WHINE_FILE,
+      turboBovFile: DEFAULT_TURBO_BOV_FILE,
+    };
+  }
+  const a = profile.audio;
+  return {
+    engineSamples: {
+      on_low:  a.on_low,
+      on_high: a.on_high,
+      off_low: a.off_low,
+      off_high: a.off_high,
+    },
+    engineExtraOff: {
+      off_mid:      a.off_mid,
+      off_veryhigh: a.off_veryhigh,
+    },
+    tranyDecel: a.tranyDecel || DEFAULT_TRANY_DECEL,
+    revFile: a.rev || DEFAULT_REV_FILE,
+    limiterFile: a.limiter || DEFAULT_LIMITER_FILE,
+    tranyFile: a.trany || DEFAULT_TRANY_FILE,
+    turboWhineFile: a.turboWhine || DEFAULT_TURBO_WHINE_FILE,
+    turboBovFile: a.turboBov || DEFAULT_TURBO_BOV_FILE,
+  };
+}
+
+function buildAllFiles(fc) {
+  return [
+    ...Object.values(fc.engineSamples).map(file => ({ file })),
+    ...Object.values(fc.engineExtraOff).map(file => ({ file })),
+    ...fc.tranyDecel,
+    { file: fc.revFile },
+    { file: fc.limiterFile },
+    { file: fc.tranyFile },
+    { file: fc.turboWhineFile },
+    { file: fc.turboBovFile },
+  ];
+}
+
 // --- Exhaust IR generator ---
 
 /**
  * Procedurally generate a short impulse response simulating exhaust pipe resonance.
- * Models a tube resonator: initial impulse followed by decaying reflections at the
- * round-trip delay interval, with phase inversion at open-end bounces.
  */
 function generateExhaustIR(ctx, { pipeLength = 1.5, diameter = 0.08, reflections = 12 } = {}) {
-  const c = 343; // speed of sound m/s
+  const c = 343;
   const roundTrip = (2 * pipeLength) / c;
   const sampleRate = ctx.sampleRate;
   const delaySamples = Math.round(roundTrip * sampleRate);
@@ -92,21 +130,17 @@ function generateExhaustIR(ctx, { pipeLength = 1.5, diameter = 0.08, reflections
   const buffer = ctx.createBuffer(1, irLength, sampleRate);
   const data = buffer.getChannelData(0);
 
-  // Wider pipes lose less energy per bounce
   const diameterFactor = Math.min(1, diameter / 0.1);
   const decayPerBounce = 0.35 + 0.25 * diameterFactor;
 
-  // Direct sound
   data[0] = 1.0;
 
-  // Reflected impulses with progressive decay
   let amplitude = 1.0;
   for (let i = 1; i <= reflections; i++) {
     amplitude *= decayPerBounce;
-    const sign = (i % 2 === 0) ? 1 : -1; // open-end reflection inverts phase
+    const sign = (i % 2 === 0) ? 1 : -1;
     const pos = i * delaySamples;
     if (pos < irLength) {
-      // Spread impulse slightly to simulate HF wall absorption
       data[pos] = sign * amplitude * 0.7;
       if (pos + 1 < irLength) data[pos + 1] = sign * amplitude * 0.2;
       if (pos - 1 >= 0) data[pos - 1] += sign * amplitude * 0.1;
@@ -121,8 +155,8 @@ function generateExhaustIR(ctx, { pipeLength = 1.5, diameter = 0.08, reflections
 function crossFade(value, start, end) {
   const x = Math.max(0, Math.min(1, (value - start) / (end - start)));
   return {
-    gain1: Math.cos((1.0 - x) * 0.5 * Math.PI), // fades IN as value increases
-    gain2: Math.cos(x * 0.5 * Math.PI),          // fades OUT as value increases
+    gain1: Math.cos((1.0 - x) * 0.5 * Math.PI),
+    gain2: Math.cos(x * 0.5 * Math.PI),
   };
 }
 
@@ -134,15 +168,32 @@ function rpmToDetune(rpm) {
 // --- Main class ---
 
 export class EngineAudio {
-  constructor() {
+  /**
+   * @param {object} [profile] - Engine profile from profiles.js. Omit for BAC/S2000 defaults.
+   */
+  constructor(profile) {
     this.ctx = null;
     this.buffers = new Map();
     this.masterGain = null;
 
+    // Profile-derived config
+    const p = profile || null;
+    this._idleRPM = p ? p.idleRPM : IDLE_RPM;
+    this._redlineRPM = p ? p.redlineRPM : REDLINE_RPM;
+    this._cylCount = p ? p.cylinders : 4;
+
+    // Audio file config
+    this._fileConfig = buildFileConfig(p);
+    this._allFiles = buildAllFiles(this._fileConfig);
+
+    // Exhaust params from profile
+    this._pipeLength = p?.exhaust?.pipeLength ?? 1.5;
+    this._pipeDiameter = p?.exhaust?.diameter ?? 0.08;
+    this._exhaustWet = p?.exhaust?.wet ?? 0.3;
+
     // Core engine: 4 simultaneous sources
-    this._engineSources = {};  // keyed by 'on_low', 'on_high', 'off_low', 'off_high'
+    this._engineSources = {};
     this._engineGains = {};
-    // Extra off-throttle engine layers
     this._extraOffSources = {};
     this._extraOffGains = {};
 
@@ -168,9 +219,6 @@ export class EngineAudio {
     this._convolver = null;
     this._dryGain = null;
     this._wetGain = null;
-    this._pipeLength = 1.5;
-    this._pipeDiameter = 0.08;
-    this._exhaustWet = 0.3;
 
     // Shift thud
     this._lastGear = -1;
@@ -185,17 +233,19 @@ export class EngineAudio {
 
     this._started = false;
 
-    // Per-cylinder micro-variation: subtle per-fire jitter to break mechanical perfection
-    // Cycles through per-cylinder offsets based on firing count
+    // Per-cylinder micro-variation
     this._fireCount = 0;
-    this._cylCount = 4;  // updated from state
-    // Pre-computed per-cylinder detune offsets (±3 cents) and gain offsets (±3%)
     this._cylDetuneOffsets = [1.2, -2.1, 0.8, -1.5, 2.4, -0.6];
     this._cylGainOffsets = [0.02, -0.015, 0.025, -0.01, 0.018, -0.02];
 
     // Debug
     this.debugBandGains = {};
     this.debugDetune = 0;
+  }
+
+  /** Normalize RPM using this engine's idle/redline range */
+  _normalizeRPM(rpm) {
+    return normalizeRPMFor(rpm, this._idleRPM, this._redlineRPM);
   }
 
   async init(onProgress) {
@@ -230,7 +280,8 @@ export class EngineAudio {
     this._turboGain.connect(this._engineBus);
 
     let loaded = 0;
-    for (const entry of ALL_FILES) {
+    const total = this._allFiles.length;
+    for (const entry of this._allFiles) {
       try {
         const res = await fetch(entry.file);
         const arrayBuf = await res.arrayBuffer();
@@ -240,7 +291,7 @@ export class EngineAudio {
         console.warn(`Failed to load ${entry.file}:`, e);
       }
       loaded++;
-      if (onProgress) onProgress(loaded / ALL_FILES.length);
+      if (onProgress) onProgress(loaded / total);
     }
   }
 
@@ -263,8 +314,8 @@ export class EngineAudio {
 
     const { rpm, throttle, gear, speed, shifting, revLimiterActive,
             shiftOscillation = 0, shiftOscAmplitude = 0, shiftOscRPMDelta = 0 } = state;
-    const pitchRPM = Math.max(IDLE_RPM, rpm);  // pitch follows actual RPM past redline
-    const nRPM = normalizeRPM(Math.min(rpm, REDLINE_RPM)); // gain crossfade stays in normal range
+    const pitchRPM = Math.max(this._idleRPM, rpm);  // pitch follows actual RPM past redline
+    const nRPM = this._normalizeRPM(Math.min(rpm, this._redlineRPM)); // gain crossfade stays in normal range
     const now = this.ctx.currentTime;
 
     // --- 1. Pitch via detune + shift oscillation wobble + per-cylinder jitter ---
@@ -280,7 +331,7 @@ export class EngineAudio {
 
     const detune = baseDetune + detuneWobble;
     const detuneWithMicro = detune + microDetune;
-    this.debugDetune = detune;  // debug shows clean value without micro-jitter
+    this.debugDetune = detune;
     this.debugShiftOsc = shiftOscAmplitude;
 
     for (const key of Object.keys(this._engineSources)) {
@@ -292,9 +343,6 @@ export class EngineAudio {
       if (src) src.detune.setTargetAtTime(detuneWithMicro, now, 0.015);
     }
 
-    // Gain modulation factor: oscillation modulates engine volume ±15%
-    // Out of phase with detune (when pitch goes up, gain dips slightly — load transfer feel)
-    // Gain breathing during shift oscillation
     const gainMod = 1.0 - shiftOscillation * 0.30;
 
     // --- 2. Crossfade gains ---
@@ -322,8 +370,6 @@ export class EngineAudio {
     const pitchedMix = Math.cos(revBlend * Math.PI / 2);
     const revMix = Math.sin(revBlend * Math.PI / 2);
 
-    // Apply gains: on-samples get onGain × onVolume, off-samples get offGain
-    // Debug values use clean gainMod; audio nodes get per-cylinder micro-variation
     const engineGainValues = {
       on_low:   onGain * onVolume * lowGain * pitchedMix * gainMod,
       on_high:  onGain * onVolume * highGain * pitchedMix * gainMod,
@@ -398,9 +444,10 @@ export class EngineAudio {
   _startAllEngineSources() {
     if (this._started) return;
     const now = this.ctx.currentTime;
+    const fc = this._fileConfig;
 
     // Core 4 engine samples
-    for (const [key, file] of Object.entries(ENGINE_SAMPLES)) {
+    for (const [key, file] of Object.entries(fc.engineSamples)) {
       const buf = this.buffers.get(file);
       if (!buf) continue;
 
@@ -419,7 +466,7 @@ export class EngineAudio {
     }
 
     // Extra off-throttle layers
-    for (const [key, file] of Object.entries(ENGINE_EXTRA_OFF)) {
+    for (const [key, file] of Object.entries(fc.engineExtraOff)) {
       const buf = this.buffers.get(file);
       if (!buf) continue;
 
@@ -438,7 +485,7 @@ export class EngineAudio {
     }
 
     // Decel transmission layers
-    for (const entry of TRANY_DECEL) {
+    for (const entry of fc.tranyDecel) {
       const buf = this.buffers.get(entry.file);
       if (!buf) continue;
 
@@ -484,8 +531,7 @@ export class EngineAudio {
   // === Transmission decel layers ===
 
   _updateDecelLayers(offGain, rpm, detune, now) {
-    // 4-band crossfade for decel transmission noise
-    const n = normalizeRPM(rpm);
+    const n = this._normalizeRPM(rpm);
     let verylow = 0, low = 0, lowmid = 0, high = 0;
 
     if (n < 0.25) { verylow = 1; }
@@ -505,7 +551,7 @@ export class EngineAudio {
       high = Math.sin(t * Math.PI / 2);
     } else { high = 1; }
 
-    const decelVol = offGain * 0.3; // subtle layer alongside engine off sounds
+    const decelVol = offGain * 0.3;
     const vals = { verylow, low, lowmid, high };
 
     for (const band of Object.keys(vals)) {
@@ -524,7 +570,7 @@ export class EngineAudio {
 
   _ensureRevSource(now) {
     if (this._revSource) return;
-    const buf = this.buffers.get(REV_FILE);
+    const buf = this.buffers.get(this._fileConfig.revFile);
     if (!buf) return;
 
     this._revGain = this.ctx.createGain();
@@ -552,7 +598,7 @@ export class EngineAudio {
 
   _updateLimiter(active, now) {
     if (active && !this._limiterActive) {
-      const buf = this.buffers.get(LIMITER_FILE);
+      const buf = this.buffers.get(this._fileConfig.limiterFile);
       if (!buf) return;
       this._limiterGain = this.ctx.createGain();
       this._limiterGain.gain.value = 0;
@@ -587,7 +633,7 @@ export class EngineAudio {
 
   _updateTransmission(speed, gear, gainMod, now) {
     if (!this._tranySource && gear > 0) {
-      const buf = this.buffers.get(TRANY_FILE);
+      const buf = this.buffers.get(this._fileConfig.tranyFile);
       if (!buf) return;
       this._tranyGain = this.ctx.createGain();
       this._tranyGain.gain.value = 0;
@@ -605,7 +651,6 @@ export class EngineAudio {
     const pitchRate = Math.max(0.3, Math.min(3.0, speed / 60));
     this._tranySource.playbackRate.setTargetAtTime(pitchRate, now, 0.05);
 
-    // Transmission whine also modulated by shift oscillation
     const gearFactor = gear > 0 ? (gear / 5) : 0;
     const speedFactor = Math.min(1, speed / 120);
     this._tranyGain.gain.setTargetAtTime(gearFactor * speedFactor * 0.15 * gainMod, now, 0.08);
@@ -619,31 +664,18 @@ export class EngineAudio {
 
   // === Shift thud ===
 
-  /**
-   * Context-aware shift thud.
-   * @param {number} rpmDelta - signed RPM change (negative = upshift, positive = downshift)
-   * @param {boolean} throttle - whether throttle was applied during shift
-   */
   _playShiftThud(rpmDelta, throttle) {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
 
-    // Scale by RPM delta magnitude: bigger jump = louder thud
     const magnitude = Math.min(1, Math.abs(rpmDelta) / 3000);
-    if (magnitude < 0.05) return; // skip tiny shifts (e.g. near-idle)
+    if (magnitude < 0.05) return;
 
-    // Throttle adds intensity: WOT shift is harsher than off-throttle
     const throttleFactor = throttle ? 1.0 : 0.6;
-
-    // Base frequency: downshifts are higher pitched (sharper engagement)
     const isDownshift = rpmDelta > 0;
     const baseFreq = isDownshift ? 80 : 55;
     const endFreq = isDownshift ? 40 : 25;
-
-    // Amplitude: 0.1 (gentle) to 0.35 (violent)
     const amp = (0.1 + magnitude * 0.25) * throttleFactor;
-
-    // Decay time: bigger shifts ring longer
     const decayTau = 0.02 + magnitude * 0.02;
 
     const osc = this.ctx.createOscillator();
@@ -667,7 +699,7 @@ export class EngineAudio {
   _startTurboWhine() {
     if (this._turboWhineSource || this._turboOsc) return;
 
-    const buf = this.buffers.get(TURBO_WHINE_FILE);
+    const buf = this.buffers.get(this._fileConfig.turboWhineFile);
     if (buf) {
       // Sample-based: loop the recording, pitch via playbackRate
       this._turboWhineSource = this.ctx.createBufferSource();
@@ -732,7 +764,7 @@ export class EngineAudio {
     if (!this.ctx) return;
     const intensity = Math.min(1, boostPsi / 14.7);
 
-    const bovBuf = this.buffers.get(TURBO_BOV_FILE);
+    const bovBuf = this.buffers.get(this._fileConfig.turboBovFile);
     if (bovBuf) {
       // Sample-based BOV
       const source = this.ctx.createBufferSource();
@@ -782,13 +814,6 @@ export class EngineAudio {
     if (this._wetGain) this._wetGain.gain.value = Math.sin(this._exhaustWet * Math.PI / 2);
   }
 
-  /**
-   * Update exhaust pipe parameters at runtime.
-   * @param {object} opts
-   * @param {number} [opts.pipeLength] - pipe length in meters (0.5–3.0)
-   * @param {number} [opts.diameter] - pipe diameter in meters (0.04–0.15)
-   * @param {number} [opts.wetMix] - dry/wet mix 0–1
-   */
   setExhaustParams({ pipeLength, diameter, wetMix } = {}) {
     if (!this.ctx || !this._convolver) return;
     let regenerate = false;

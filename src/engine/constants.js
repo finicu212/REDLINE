@@ -16,3 +16,8 @@ export const TACHO_REDLINE_RPM = 7200;
 export function normalizeRPM(rpm) {
   return (rpm - IDLE_RPM) / (REDLINE_RPM - IDLE_RPM);
 }
+
+// Parameterized version for per-profile RPM ranges
+export function normalizeRPMFor(rpm, idleRPM, redlineRPM) {
+  return (rpm - idleRPM) / (redlineRPM - idleRPM);
+}

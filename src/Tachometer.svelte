@@ -7,7 +7,7 @@
     tachoTickMid, tachoInnerRing, tachoGrid,
   } from './engine/tokens.js';
 
-  let { rpm = 850 } = $props();
+  let { rpm = 850, redline = TACHO_REDLINE_RPM, maxRPM = TACHO_MAX_RPM } = $props();
 
   let canvasEl;
   let containerEl;
@@ -16,8 +16,8 @@
   const CENTER = SIZE / 2;
   const RADIUS = SIZE / 2 - 20;
 
-  const DIAL_MAX = TACHO_MAX_RPM;
-  const TICK_COUNT = DIAL_MAX / 1000;
+  let DIAL_MAX = $derived(maxRPM);
+  let TICK_COUNT = $derived(DIAL_MAX / 1000);
 
   // Sweep: 225° (bottom-left) to -45° (bottom-right) = 270° arc
   const START_ANGLE = (225 * Math.PI) / 180;
@@ -70,7 +70,7 @@
 
     // --- Red zone arc (filled wedge) ---
     const redStartAngle = -(rpmToAngle(DIAL_MAX));
-    const redEndAngle = -(rpmToAngle(TACHO_REDLINE_RPM));
+    const redEndAngle = -(rpmToAngle(redline));
     ctx.beginPath();
     ctx.arc(CENTER, CENTER, RADIUS - 2, redEndAngle, redStartAngle);
     ctx.arc(CENTER, CENTER, RADIUS - 16, redStartAngle, redEndAngle, true);
@@ -94,7 +94,7 @@
       ctx.beginPath();
       ctx.moveTo(CENTER + inner * cos, CENTER - inner * sin);
       ctx.lineTo(CENTER + outer * cos, CENTER - outer * sin);
-      ctx.strokeStyle = tickRPM >= TACHO_REDLINE_RPM ? EK_RED : tachoTickMid;
+      ctx.strokeStyle = tickRPM >= redline ? EK_RED : tachoTickMid;
       ctx.lineWidth = 1;
       ctx.stroke();
     }
@@ -106,7 +106,7 @@
       const angle = START_ANGLE - frac * SWEEP;
       const cos = Math.cos(angle);
       const sin = Math.sin(angle);
-      const inRedzone = tickRPM >= TACHO_REDLINE_RPM;
+      const inRedzone = tickRPM >= redline;
 
       // Tick line
       const inner = RADIUS - 18;

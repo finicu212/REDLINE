@@ -43,7 +43,7 @@
 
   /** @type {import('./engine/audio.js').EngineAudio} */
   const engineAudio = config.engineAudio;
-  const drivetrain = new Drivetrain();
+  const drivetrain = new Drivetrain(config.profile);
 
   function onKeyDown(e) {
     if (e.code === 'Space' && !e.repeat) {
@@ -257,7 +257,7 @@
 
 <div class="sim" class:sim-touch={isTouchDevice}>
   <div class="cylinder-area">
-    <CylinderBank {rpm} cylinders={config.cylinders} layout={config.layout} {throttle} />
+    <CylinderBank {rpm} cylinders={config.profile.cylinders} layout={config.profile.layout} {throttle} />
   </div>
 
   <!-- Throttle bar -->
@@ -347,7 +347,7 @@
     {/if}
 
     <div class="hud-right">
-      <Tachometer {rpm} />
+      <Tachometer {rpm} redline={config.profile.redlineRPM} maxRPM={config.profile.tachoMaxRPM} />
     </div>
   </div>
 </div>

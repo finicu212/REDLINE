@@ -2,9 +2,12 @@
  * Drivetrain physics — gear ratios, inertia model, rev limiter, manual clutch,
  * and spring-damper clutch engagement.
  *
- * Based on Honda S2000 AP1 gearbox. Physics model:
+ * Physics model:
  *   angular_accel = (drive_torque - resistance_torque) / effective_inertia
  *   effective_inertia = engine_inertia + vehicle_inertia / (total_ratio^2)
+ *
+ * Accepts an optional profile object (from profiles.js) to configure all parameters.
+ * When no profile is passed, defaults to Honda S2000 AP1 values for backward compat.
  *
  * Clutch engagement: when gears engage after a shift, engine and wheel inertias
  * are coupled through a torsional spring-damper. The RPM mismatch produces real
@@ -18,17 +21,20 @@
 
 import { IDLE_RPM, REDLINE_RPM, REV_CUT_RPM, MAX_RPM } from './constants.js';
 
-// Index 0 = Neutral (no drive connection), 1-5 = gears
+// --- S2000 AP1 defaults (used when no profile is passed) ---
+
 const GEAR_RATIOS = [0, 3.133, 2.045, 1.481, 1.161, 0.943];
 const FINAL_DRIVE = 4.100;
-const TIRE_CIRCUMFERENCE = 1.88; // meters (~205/55R16)
+const TIRE_CIRCUMFERENCE = 1.88;
 
-const ENGINE_INERTIA = 0.15;     // kg·m² — engine rotating assembly
-const VEHICLE_INERTIA = 90;      // effective vehicle rotational inertia at wheels
+const ENGINE_INERTIA = 0.15;
+const VEHICLE_INERTIA = 90;
 
-const FRICTION_TORQUE = 8;       // Nm — constant mechanical friction
-const ENGINE_BRAKING_FACTOR = 12; // Nm — compression braking on closed throttle
-const BRAKE_DECEL = 9.0;          // m/s² — vehicle deceleration under braking (~0.9g)
+const FRICTION_TORQUE = 8;
+const ENGINE_BRAKING_FACTOR = 12;
+const BRAKE_DECEL = 9.0;
+
+const SHIFT_DURATION = 150;
 
 // Vehicle resistance (applied to speed directly, not through drivetrain)
 const ROLLING_RESISTANCE = 0.4;  // m/s² — tire deformation, bearing friction (~constant)
@@ -60,7 +66,6 @@ const CLUTCH_STIFFNESS = 190;    // Nm/rad — torsional spring constant
 const CLUTCH_DAMPING = 3.5;      // Nm·s/rad — torsional viscous damping
 const CLUTCH_SETTLE_THRESHOLD = 5; // RPM — snap together when deviation < this
 
-// Simplified torque curve (RPM → Nm at wide-open throttle)
 const TORQUE_CURVE = [
   [850,  120],
   [2000, 155],
@@ -78,13 +83,13 @@ const RPM_TO_RADS = (2 * Math.PI) / 60;
 
 // --- Helpers ---
 
-function lerpTorqueCurve(rpm) {
-  if (rpm <= TORQUE_CURVE[0][0]) return TORQUE_CURVE[0][1];
-  if (rpm >= TORQUE_CURVE[TORQUE_CURVE.length - 1][0]) return TORQUE_CURVE[TORQUE_CURVE.length - 1][1];
+function lerpTorqueCurveWith(curve, rpm) {
+  if (rpm <= curve[0][0]) return curve[0][1];
+  if (rpm >= curve[curve.length - 1][0]) return curve[curve.length - 1][1];
 
-  for (let i = 0; i < TORQUE_CURVE.length - 1; i++) {
-    const [r0, t0] = TORQUE_CURVE[i];
-    const [r1, t1] = TORQUE_CURVE[i + 1];
+  for (let i = 0; i < curve.length - 1; i++) {
+    const [r0, t0] = curve[i];
+    const [r1, t1] = curve[i + 1];
     if (rpm >= r0 && rpm <= r1) {
       const t = (rpm - r0) / (r1 - r0);
       return t0 + t * (t1 - t0);
@@ -93,22 +98,23 @@ function lerpTorqueCurve(rpm) {
   return 0;
 }
 
-// Pre-compute peak power (W) from the WOT torque curve: max(T × omega)
-const PEAK_POWER = TORQUE_CURVE.reduce((max, [r, t]) => {
-  const p = t * r * RPM_TO_RADS;
-  return p > max ? p : max;
-}, 0);
+/** Module-level helpers using S2000 defaults — for backward-compat exports */
+function lerpTorqueCurve(rpm) {
+  return lerpTorqueCurveWith(TORQUE_CURVE, rpm);
+}
+
+function computePeakPower(curve) {
+  return curve.reduce((max, [r, t]) => {
+    const p = t * r * RPM_TO_RADS;
+    return p > max ? p : max;
+  }, 0);
+}
+
+const PEAK_POWER = computePeakPower(TORQUE_CURVE);
 
 /**
- * BeamNG-style constant-power throttle model.
- * Throttle pedal scales power output, not torque.
- *   target_power = PEAK_POWER × pedal
- *   torque_out   = min(WOT_torque, target_power / omega)
- *
- * Effect: at low RPM, small pedal → high torque fraction (omega is small,
- * so P/omega is large). At high RPM, pedal maps ~linearly to torque.
- * This matches real throttle body physics: at low RPM the engine has time
- * to fill cylinders even through a partially open throttle.
+ * BeamNG-style constant-power throttle model (S2000 defaults).
+ * Kept as module-level export for backward compat.
  */
 function throttleTorque(rpm, pedal) {
   if (pedal <= 0) return 0;
@@ -134,10 +140,33 @@ function throttleTorque(rpm, pedal) {
 // --- Drivetrain class ---
 
 export class Drivetrain {
-  constructor() {
-    this.rpm = IDLE_RPM;
-    this.gear = 0;          // 0 = neutral
-    this.speed = 0;          // km/h
+  /**
+   * @param {object} [profile] - Engine profile from profiles.js. Omit for S2000 defaults.
+   */
+  constructor(profile) {
+    const p = profile || null;
+
+    // Profile parameters (instance properties)
+    this._gearRatios = p ? p.gearRatios : GEAR_RATIOS;
+    this._finalDrive = p ? p.finalDrive : FINAL_DRIVE;
+    this._tireCircumference = p ? p.tireCircumference : TIRE_CIRCUMFERENCE;
+    this._engineInertia = p ? p.engineInertia : ENGINE_INERTIA;
+    this._vehicleInertia = p ? p.vehicleInertia : VEHICLE_INERTIA;
+    this._frictionTorque = p ? p.frictionTorque : FRICTION_TORQUE;
+    this._engineBrakingFactor = p ? p.engineBrakingFactor : ENGINE_BRAKING_FACTOR;
+    this._brakeDecel = p ? p.brakeDecel : BRAKE_DECEL;
+    this._shiftDuration = p ? p.shiftDuration : SHIFT_DURATION;
+    this._torqueCurve = p ? p.torqueCurve : TORQUE_CURVE;
+    this._idleRPM = p ? p.idleRPM : IDLE_RPM;
+    this._redlineRPM = p ? p.redlineRPM : REDLINE_RPM;
+    this._revCutRPM = p ? p.revCutRPM : REV_CUT_RPM;
+    this._maxRPM = p ? p.maxRPM : MAX_RPM;
+    this._maxGear = this._gearRatios.length - 1;
+    this._peakPower = computePeakPower(this._torqueCurve);
+
+    this.rpm = this._idleRPM;
+    this.gear = 0;
+    this.speed = 0;
     this.revLimiterActive = false;
 
     // Clutch state
@@ -168,19 +197,46 @@ export class Drivetrain {
   }
 
   get totalRatio() {
-    return GEAR_RATIOS[this.gear] * FINAL_DRIVE;
+    return this._gearRatios[this.gear] * this._finalDrive;
   }
 
   get gearLabel() {
     return this.gear === 0 ? 'N' : String(this.gear);
   }
 
+  /** Instance-level torque interpolation using this profile's curve */
+  _lerpTorque(rpm) {
+    return lerpTorqueCurveWith(this._torqueCurve, rpm);
+  }
+
+  /** Instance-level constant-power throttle model using this profile's peak power.
+   *  Includes over-rev torque falloff above redline. */
+  _throttleTorque(rpm, pedal) {
+    if (pedal <= 0) return 0;
+
+    // Base torque from curve, with falloff above redline (breathing limits)
+    let wotTorque = this._lerpTorque(rpm);
+    if (rpm > this._redlineRPM) {
+      // Torque drops ~40% per 1000 RPM above redline (valve float, poor breathing)
+      const overRev = (rpm - this._redlineRPM) / 1000;
+      wotTorque *= Math.max(0.05, 1 - 0.4 * overRev);
+    }
+
+    // Constant-power limit applies at ALL throttle positions including WOT.
+    const omega = rpm * RPM_TO_RADS;
+    if (omega <= 0) return wotTorque * pedal;
+
+    const targetPower = this._peakPower * pedal;
+    const powerLimitedTorque = targetPower / omega;
+    return Math.min(wotTorque, powerLimitedTorque);
+  }
+
   /** Snapshot of all drivetrain state for audio + debug. */
   getState() {
     const coupled = this.gear > 0 && !this.clutchHeld && !this._clutchEngaging;
-    const totalRatio = this.gear > 0 ? GEAR_RATIOS[this.gear] * FINAL_DRIVE : 0;
+    const totalRatio = this.gear > 0 ? this._gearRatios[this.gear] * this._finalDrive : 0;
     return {
-      rpm: Math.max(IDLE_RPM, this.rpm),
+      rpm: Math.max(this._idleRPM, this.rpm),
       speed: this.speed,
       gear: this.gear,
       gearLabel: this.gearLabel,
@@ -191,9 +247,9 @@ export class Drivetrain {
       throttle: false, // set by caller
       totalRatio,
       effectiveInertia: coupled
-        ? ENGINE_INERTIA + VEHICLE_INERTIA / (totalRatio * totalRatio)
-        : ENGINE_INERTIA,
-      torqueNm: coupled ? throttleTorque(this.rpm, this._lastThrottle) : 0,
+        ? this._engineInertia + this._vehicleInertia / (totalRatio * totalRatio)
+        : this._engineInertia,
+      torqueNm: coupled ? this._throttleTorque(this.rpm, this._lastThrottle) : 0,
       // Shift oscillation (consumed by audio for detune + gain modulation)
       shiftOscillation: this.shiftOscillation,
       shiftOscAmplitude: this.shiftOscAmplitude,
@@ -207,26 +263,37 @@ export class Drivetrain {
 
   /** Shift up. Works with or without clutch. Without clutch, triggers spring-damper. */
   shiftUp() {
-    if (this.gear >= 5) return false;
+    if (this.gear >= this._maxGear) return false;
     const hadClutch = this.clutchHeld;
     this.gear += 1;
     if (!hadClutch && this.gear > 0 && this.speed > 0) this._engageClutch();
     return true;
   }
 
-  /** Shift down. Works with or without clutch. No over-rev protection. */
+  /** Shift down. Works with or without clutch. Over-rev protection included. */
   shiftDown() {
     if (this.gear <= 0) return false;
+
+    const newGear = this.gear - 1;
+
+    // Over-rev protection
+    if (newGear > 0 && this.speed > 0) {
+      const newTotalRatio = this._gearRatios[newGear] * this._finalDrive;
+      const wheelRPS = (this.speed / 3.6) / this._tireCircumference;
+      const projectedRPM = wheelRPS * 60 * newTotalRatio;
+      if (projectedRPM > this._maxRPM) return false;
+    }
+
     const hadClutch = this.clutchHeld;
-    this.gear -= 1;
+    this.gear = newGear;
     if (!hadClutch && this.gear > 0 && this.speed > 0) this._engageClutch();
     return true;
   }
 
   /** @private Trigger spring-damper engagement from current state. */
   _engageClutch() {
-    const totalRatio = GEAR_RATIOS[this.gear] * FINAL_DRIVE;
-    const wheelRPS = (this.speed / 3.6) / TIRE_CIRCUMFERENCE;
+    const totalRatio = this._gearRatios[this.gear] * this._finalDrive;
+    const wheelRPS = (this.speed / 3.6) / this._tireCircumference;
     const wheelRPM = wheelRPS * 60 * totalRatio;
     const rpmDelta = wheelRPM - this.rpm;
 
@@ -237,7 +304,7 @@ export class Drivetrain {
       this._clutchInitialDelta = rpmDelta;
       this._oscRPMDelta = rpmDelta;
     } else {
-      this.rpm = Math.max(IDLE_RPM, Math.min(MAX_RPM, wheelRPM));
+      this.rpm = Math.max(this._idleRPM, Math.min(this._maxRPM, wheelRPM));
     }
   }
 
@@ -253,11 +320,11 @@ export class Drivetrain {
     this._lastThrottle = throttle;
     this._time += dt;
 
-    const totalRatio = this.gear > 0 ? GEAR_RATIOS[this.gear] * FINAL_DRIVE : 0;
+    const totalRatio = this.gear > 0 ? this._gearRatios[this.gear] * this._finalDrive : 0;
 
     // --- Clutch release edge: start spring-damper engagement ---
     if (this._wasClutchHeld && !this.clutchHeld && this.gear > 0 && this.speed > 0) {
-      const wheelRPS = (this.speed / 3.6) / TIRE_CIRCUMFERENCE;
+      const wheelRPS = (this.speed / 3.6) / this._tireCircumference;
       const wheelRPM = wheelRPS * 60 * totalRatio;
       const rpmDelta = wheelRPM - this.rpm;
 
@@ -268,7 +335,7 @@ export class Drivetrain {
         this._clutchInitialDelta = rpmDelta;
         this._oscRPMDelta = rpmDelta;
       } else {
-        this.rpm = Math.max(IDLE_RPM, Math.min(MAX_RPM, wheelRPM));
+        this.rpm = Math.max(this._idleRPM, Math.min(this._maxRPM, wheelRPM));
       }
     }
     this._wasClutchHeld = this.clutchHeld;
@@ -283,9 +350,9 @@ export class Drivetrain {
     const coupled = this.gear > 0 && !this.clutchHeld && !this._clutchEngaging;
 
     // Rev limiter (fuel cut with hysteresis)
-    if (this.rpm >= REDLINE_RPM) {
+    if (this.rpm >= this._redlineRPM) {
       this.revLimiterActive = true;
-    } else if (this.rpm < REV_CUT_RPM) {
+    } else if (this.rpm < this._revCutRPM) {
       this.revLimiterActive = false;
     }
 
@@ -295,31 +362,31 @@ export class Drivetrain {
     // Drive torque — constant-power throttle model (BeamNG-style) + turbo boost
     let driveTorque = 0;
     if (throttle > 0 && !this.revLimiterActive) {
-      driveTorque = throttleTorque(this.rpm, throttle);
+      driveTorque = this._throttleTorque(this.rpm, throttle);
       // Boost adds torque proportional to manifold pressure
       const boostFraction = this.boostPsi / TURBO_MAX_PSI;
       driveTorque *= (1 + boostFraction * TURBO_BOOST_MULTIPLIER);
     }
 
     // Resistance torque — engine braking scales with closed throttle
-    let resistanceTorque = FRICTION_TORQUE;
+    let resistanceTorque = this._frictionTorque;
     const closedThrottle = 1 - throttle;
     if (coupled) {
-      resistanceTorque += ENGINE_BRAKING_FACTOR * totalRatio * closedThrottle;
+      resistanceTorque += this._engineBrakingFactor * totalRatio * closedThrottle;
       // Aero + rolling drag reflected through drivetrain as engine resistance torque
       const v = this.speed / 3.6; // m/s
       const dragForce = AERO_CD_A_RHO * v * v + ROLLING_RESISTANCE * VEHICLE_MASS;
-      const wheelRadius = TIRE_CIRCUMFERENCE / (2 * Math.PI);
+      const wheelRadius = this._tireCircumference / (2 * Math.PI);
       resistanceTorque += (dragForce * wheelRadius) / totalRatio;
     } else {
       // Decoupled: compression braking + pumping losses scale with RPM
-      resistanceTorque += ENGINE_BRAKING_FACTOR * 1.2 * closedThrottle;
+      resistanceTorque += this._engineBrakingFactor * 1.2 * closedThrottle;
       // RPM-proportional friction (pumping losses increase with speed)
       resistanceTorque += (this.rpm / 1000) * 4.0 * closedThrottle;
     }
 
     if (this.revLimiterActive) {
-      resistanceTorque += ENGINE_BRAKING_FACTOR * 2;
+      resistanceTorque += this._engineBrakingFactor * 2;
     }
 
     // --- Clutch spring-damper engagement ---
@@ -334,19 +401,19 @@ export class Drivetrain {
       const clutchTorque = CLUTCH_STIFFNESS * this._clutchAngleDelta + CLUTCH_DAMPING * omegaDelta;
 
       // Apply to engine side (on top of drive/resistance torques)
-      const engineAlpha = (driveTorque - resistanceTorque + clutchTorque) / ENGINE_INERTIA;
+      const engineAlpha = (driveTorque - resistanceTorque + clutchTorque) / this._engineInertia;
       this.rpm += engineAlpha * dt * RADS_TO_RPM;
 
       // Apply reaction to wheel side (including aero + rolling drag)
-      const wheelJ = VEHICLE_INERTIA / (totalRatio * totalRatio);
+      const wheelJ = this._vehicleInertia / (totalRatio * totalRatio);
       const v = this.speed / 3.6;
       const dragForce = AERO_CD_A_RHO * v * v + ROLLING_RESISTANCE * VEHICLE_MASS;
-      const wheelRadius = TIRE_CIRCUMFERENCE / (2 * Math.PI);
+      const wheelRadius = this._tireCircumference / (2 * Math.PI);
       const dragTorqueAtEngine = (dragForce * wheelRadius) / totalRatio;
       this._wheelOmega += ((-clutchTorque - dragTorqueAtEngine) / wheelJ) * dt;
 
       // Derive speed from wheel omega
-      this.speed = Math.max(0, (this._wheelOmega * RADS_TO_RPM / totalRatio) * TIRE_CIRCUMFERENCE / 60 * 3.6);
+      this.speed = Math.max(0, (this._wheelOmega * RADS_TO_RPM / totalRatio) * this._tireCircumference / 60 * 3.6);
 
       // Update audio oscillation from actual physics state
       const rpmDeviation = this.rpm - (this._wheelOmega * RADS_TO_RPM);
@@ -360,8 +427,8 @@ export class Drivetrain {
       if (rpmDiff < CLUTCH_SETTLE_THRESHOLD && Math.abs(omegaDelta) < CLUTCH_SETTLE_THRESHOLD * RPM_TO_RADS) {
         this._clutchEngaging = false;
         // Snap to shared velocity (conserve momentum)
-        const Je = ENGINE_INERTIA;
-        const Jw = VEHICLE_INERTIA / (totalRatio * totalRatio);
+        const Je = this._engineInertia;
+        const Jw = this._vehicleInertia / (totalRatio * totalRatio);
         const sharedOmega = (Je * this.rpm * RPM_TO_RADS + Jw * this._wheelOmega) / (Je + Jw);
         this.rpm = sharedOmega * RADS_TO_RPM;
         this.shiftOscillation = 0;
@@ -369,12 +436,12 @@ export class Drivetrain {
       }
     } else if (coupled) {
       // Rigid coupling — engine and wheels locked
-      const J = ENGINE_INERTIA + VEHICLE_INERTIA / (totalRatio * totalRatio);
+      const J = this._engineInertia + this._vehicleInertia / (totalRatio * totalRatio);
       const netTorque = driveTorque - resistanceTorque;
       this.rpm += (netTorque / J) * dt * RADS_TO_RPM;
 
       const wheelRPM = this.rpm / totalRatio;
-      this.speed = (wheelRPM * TIRE_CIRCUMFERENCE / 60) * 3.6;
+      this.speed = (wheelRPM * this._tireCircumference / 60) * 3.6;
     } else {
       // Decoupled (neutral or clutch held) — engine revs freely
       let netTorque = driveTorque - resistanceTorque;
@@ -385,7 +452,7 @@ export class Drivetrain {
         netTorque += IDLE_RESTORE_GAIN * deficit;
       }
 
-      this.rpm += (netTorque / ENGINE_INERTIA) * dt * RADS_TO_RPM;
+      this.rpm += (netTorque / this._engineInertia) * dt * RADS_TO_RPM;
 
       // Vehicle coasts — rolling resistance + aero drag
       if (this.speed > 0) {
@@ -403,11 +470,11 @@ export class Drivetrain {
     }
 
     // Floor RPM at idle (never stall)
-    if (this.rpm < IDLE_RPM) this.rpm = IDLE_RPM;
+    if (this.rpm < this._idleRPM) this.rpm = this._idleRPM;
     // No hard ceiling — engine can over-rev past redline (limiter provides resistance)
 
     // Idle flutter: per-cylinder firing pulses make idle imperfect
-    if (this.rpm < IDLE_RPM + 100 && throttle < 0.05) {
+    if (this.rpm < this._idleRPM + 100 && throttle < 0.05) {
       const flutter = IDLE_FLUTTER_RPM * Math.sin(2 * Math.PI * IDLE_FLUTTER_HZ * this._time);
       this.rpm += flutter * dt * 60; // scale by dt so it's frame-rate independent
     }
@@ -415,17 +482,17 @@ export class Drivetrain {
     // Braking: decelerates the vehicle (wheels), not the engine directly.
     if (braking && this.speed > 0) {
       const speedMS = this.speed / 3.6;
-      const newSpeedMS = Math.max(0, speedMS - BRAKE_DECEL * dt);
+      const newSpeedMS = Math.max(0, speedMS - this._brakeDecel * dt);
       this.speed = newSpeedMS * 3.6;
 
       // In gear: sync RPM to the braked wheel speed
       if (coupled) {
-        const brakedWheelRPS = newSpeedMS / TIRE_CIRCUMFERENCE;
+        const brakedWheelRPS = newSpeedMS / this._tireCircumference;
         const brakedRPM = brakedWheelRPS * 60 * totalRatio;
-        this.rpm = Math.max(IDLE_RPM, brakedRPM);
+        this.rpm = Math.max(this._idleRPM, brakedRPM);
       } else if (this._clutchEngaging) {
         // Braking affects wheel side during clutch engagement
-        this._wheelOmega = Math.max(0, (newSpeedMS / TIRE_CIRCUMFERENCE) * 2 * Math.PI * totalRatio);
+        this._wheelOmega = Math.max(0, (newSpeedMS / this._tireCircumference) * 2 * Math.PI * totalRatio);
       }
     }
   }
@@ -439,7 +506,7 @@ export class Drivetrain {
     // --- Exhaust energy → turbine torque ---
     // Exhaust gas energy ∝ RPM × throttle. Small turbo = low inertia,
     // so even moderate exhaust flow accelerates the shaft quickly.
-    const exhaustFlow = (this.rpm / REDLINE_RPM) * throttle;
+    const exhaustFlow = (this.rpm / this._redlineRPM) * throttle;
     // Turbine torque (N·m on shaft) — tuned so WOT at 3000 RPM
     // spools to ~100% in under a second
     const turbineTorque = exhaustFlow * 3.5;

@@ -1,22 +1,42 @@
 <script>
   import { EngineAudio } from './engine/audio.js';
+  import { PROFILE_LIST } from './engine/profiles.js';
 
   let { onstart } = $props();
 
-  let cylinders = $state(4);
-  let layout = $state('inline');
+  let selectedId = $state(PROFILE_LIST[0].id);
   let loading = $state(false);
   let loadProgress = $state(0);
 
-  const engineAudio = new EngineAudio();
+  let selectedProfile = $derived(PROFILE_LIST.find(p => p.id === selectedId));
+
+  function peakHP(profile) {
+    const RPM_TO_RADS = (2 * Math.PI) / 60;
+    let max = 0;
+    for (const [r, t] of profile.torqueCurve) {
+      const hp = (t * r * RPM_TO_RADS) / 745.7;
+      if (hp > max) max = hp;
+    }
+    return Math.round(max);
+  }
+
+  function peakTorque(profile) {
+    let max = 0, atRPM = 0;
+    for (const [r, t] of profile.torqueCurve) {
+      if (t > max) { max = t; atRPM = r; }
+    }
+    return { nm: max, rpm: atRPM };
+  }
 
   async function handleStart() {
+    const profile = selectedProfile;
     loading = true;
+    const engineAudio = new EngineAudio(profile);
     await engineAudio.init((progress) => {
       loadProgress = progress;
     });
     engineAudio.start();
-    onstart({ cylinders, layout, engineAudio });
+    onstart({ profile, engineAudio });
   }
 </script>
 
@@ -24,20 +44,27 @@
   <h1 class="title">REDLINE</h1>
   <p class="subtitle">Engine Simulator</p>
 
-  <div class="option-group">
-    <span class="label">Cylinders</span>
-    <div class="toggle-row">
-      <button class:active={cylinders === 4} disabled={layout === 'v'} onclick={() => cylinders = 4}>4</button>
-      <button class:active={cylinders === 6} onclick={() => cylinders = 6}>6</button>
-    </div>
-  </div>
-
-  <div class="option-group">
-    <span class="label">Layout</span>
-    <div class="toggle-row">
-      <button class:active={layout === 'inline'} onclick={() => layout = 'inline'}>Inline</button>
-      <button class:active={layout === 'v'} onclick={() => { layout = 'v'; cylinders = 6; }}>V-Layout</button>
-    </div>
+  <div class="profiles">
+    {#each PROFILE_LIST as profile (profile.id)}
+      {@const pt = peakTorque(profile)}
+      <button
+        class="profile-card"
+        class:selected={selectedId === profile.id}
+        onclick={() => selectedId = profile.id}
+      >
+        <div class="card-name">{profile.name}</div>
+        <div class="card-desc">{profile.description}</div>
+        <div class="card-stats">
+          <span>{peakHP(profile)} HP</span>
+          <span>{pt.nm} Nm</span>
+          <span>{profile.gearRatios.length - 1}-speed</span>
+        </div>
+        <div class="card-meta">
+          <span>{profile.cylinders}cyl {profile.layout === 'v' ? 'V' : 'I'}</span>
+          <span>Redline {profile.redlineRPM}</span>
+        </div>
+      </button>
+    {/each}
   </div>
 
   {#if loading}
@@ -75,49 +102,68 @@
     text-transform: uppercase;
   }
 
-  .option-group {
+  .profiles {
     display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    justify-content: center;
+    max-width: 700px;
   }
 
-  .label {
-    font-size: 0.8rem;
-    color: var(--c-text-dim);
-    letter-spacing: 0.15em;
-    text-transform: uppercase;
-  }
-
-  .toggle-row {
-    display: flex;
-    gap: 0.5rem;
-  }
-
-  .toggle-row button {
+  .profile-card {
     background: var(--c-bg-panel);
     border: 1px solid var(--c-border-subtle);
     color: var(--c-text-dim);
-    padding: 0.5rem 1.5rem;
+    padding: 1rem 1.2rem;
     font-family: inherit;
-    font-size: 0.9rem;
     cursor: pointer;
     transition: all 0.2s;
+    text-align: left;
+    min-width: 140px;
+    max-width: 160px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
   }
 
-  .toggle-row button:hover:not(:disabled) {
+  .profile-card:hover {
     border-color: var(--c-border-focus);
     color: var(--c-text-secondary);
   }
 
-  .toggle-row button:disabled {
-    opacity: 0.3;
-    cursor: not-allowed;
-  }
-
-  .toggle-row button.active {
+  .profile-card.selected {
     border-color: var(--c-accent);
     color: var(--c-accent);
     background: var(--c-accent-dim);
+  }
+
+  .card-name {
+    font-size: 1.1rem;
+    font-weight: bold;
+    letter-spacing: 0.1em;
+  }
+
+  .card-desc {
+    font-size: 0.65rem;
+    color: var(--c-text-subtle);
+    letter-spacing: 0.05em;
+  }
+
+  .card-stats {
+    display: flex;
+    gap: 0.5rem;
+    font-size: 0.7rem;
+    color: var(--c-text-secondary);
+    flex-wrap: wrap;
+  }
+
+  .card-meta {
+    display: flex;
+    gap: 0.5rem;
+    font-size: 0.6rem;
+    color: var(--c-text-ghost);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
   }
 
   .start-btn {
@@ -164,5 +210,19 @@
     height: 100%;
     background: var(--c-accent);
     transition: width 0.2s;
+  }
+
+  @media (max-width: 600px) {
+    .profiles {
+      gap: 0.5rem;
+    }
+    .profile-card {
+      min-width: 120px;
+      max-width: 140px;
+      padding: 0.75rem 0.9rem;
+    }
+    .title {
+      font-size: 2.5rem;
+    }
   }
 </style>
