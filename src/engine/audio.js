@@ -195,9 +195,15 @@ export class EngineAudio {
     const gainMod = 1.0 - shiftOscillation * 0.30;
 
     // --- 2. Crossfade gains ---
-    // Throttle crossfade: on ↔ off (continuous 0–1)
+    // Partial throttle blending: on-samples scale with throttle, off-samples
+    // fill the gap. At 30% throttle you hear quiet on-samples + louder off-samples.
+    // Equal-power curves keep total energy constant across the blend.
     const throttleVal = Math.max(0, Math.min(1, throttle));
-    const { gain1: onGain, gain2: offGain } = crossFade(throttleVal, 0, 1);
+    const onGain  = Math.sin(throttleVal * Math.PI / 2);   // 0→0, 0.5→0.71, 1→1
+    const offGain = Math.cos(throttleVal * Math.PI / 2);   // 0→1, 0.5→0.71, 1→0
+    // Additional volume scaling: on-samples get quieter at low throttle
+    // so partial throttle sounds genuinely subdued, not just a blend
+    const onVolume = 0.3 + 0.7 * throttleVal;              // 0→0.3, 0.5→0.65, 1→1
 
     // RPM crossfade: low ↔ high (3000–6500 RPM)
     const { gain1: highGain, gain2: lowGain } = crossFade(clamped, RPM_XFADE_LOW, RPM_XFADE_HIGH);
@@ -210,10 +216,10 @@ export class EngineAudio {
     const pitchedMix = Math.cos(revBlend * Math.PI / 2);
     const revMix = Math.sin(revBlend * Math.PI / 2);
 
-    // Apply gains: each source = throttle_factor × rpm_factor × rev_factor × gainMod
+    // Apply gains: on-samples get onGain × onVolume, off-samples get offGain
     const engineGainValues = {
-      on_low:   onGain * lowGain * pitchedMix * gainMod,
-      on_high:  onGain * highGain * pitchedMix * gainMod,
+      on_low:   onGain * onVolume * lowGain * pitchedMix * gainMod,
+      on_high:  onGain * onVolume * highGain * pitchedMix * gainMod,
       off_low:  offGain * lowGain * gainMod,
       off_high: offGain * highGain * gainMod,
     };

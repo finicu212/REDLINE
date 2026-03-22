@@ -15,6 +15,8 @@
   let throttle = $state(0);       // continuous 0–1
   let mouseHeld = $state(false);
   let mouseThrottle = $state(0);  // throttle from mouse Y position
+  let clickOriginY = 0;           // Y position at mousedown (0% throttle anchor)
+  const THROTTLE_DRAG_PX = 120;   // pixels of upward drag for 100% throttle
   let spaceHeld = $state(false);
   let braking = $state(false);
   let showHint = $state(true);
@@ -58,7 +60,8 @@
 
   function onMouseDown(e) {
     mouseHeld = true;
-    mouseThrottle = 1 - (e.clientY / window.innerHeight);
+    clickOriginY = e.clientY;
+    mouseThrottle = 0;
     showHint = false;
   }
 
@@ -69,7 +72,9 @@
 
   function onMouseMove(e) {
     if (mouseHeld) {
-      mouseThrottle = 1 - (e.clientY / window.innerHeight);
+      // Upward drag from click origin → throttle 0–1
+      const dragUp = clickOriginY - e.clientY;
+      mouseThrottle = Math.max(0, Math.min(1, dragUp / THROTTLE_DRAG_PX));
     }
   }
 
@@ -133,6 +138,12 @@
 <div class="sim">
   <div class="cylinder-area">
     <CylinderBank {rpm} cylinders={config.cylinders} layout={config.layout} {throttle} />
+  </div>
+
+  <!-- Throttle cylinder indicator -->
+  <div class="throttle-cyl">
+    <div class="throttle-cyl-fill" style="height: {throttle * 100}%"></div>
+    <span class="throttle-cyl-label">{(throttle * 100).toFixed(0)}</span>
   </div>
 
   {#if showDebug && debugState}
@@ -219,5 +230,38 @@
     0% { opacity: 1; }
     70% { opacity: 1; }
     100% { opacity: 0; }
+  }
+
+  .throttle-cyl {
+    position: absolute;
+    left: 18px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 20px;
+    height: 100px;
+    background: rgba(20, 20, 30, 0.85);
+    border: 1px solid #333;
+    border-radius: 4px;
+    overflow: hidden;
+    display: flex;
+    align-items: flex-end;
+    z-index: 50;
+  }
+
+  .throttle-cyl-fill {
+    width: 100%;
+    background: linear-gradient(to top, #ff6020, #ff4010);
+    border-radius: 0 0 3px 3px;
+    transition: height 0.04s linear;
+  }
+
+  .throttle-cyl-label {
+    position: absolute;
+    width: 100%;
+    text-align: center;
+    top: -16px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.55rem;
+    color: #777;
   }
 </style>

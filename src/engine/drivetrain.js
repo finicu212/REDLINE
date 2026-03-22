@@ -48,6 +48,7 @@ const TORQUE_CURVE = [
 ];
 
 const RADS_TO_RPM = 60 / (2 * Math.PI);
+const RPM_TO_RADS = (2 * Math.PI) / 60;
 
 // --- Helpers ---
 
@@ -64,6 +65,36 @@ function lerpTorqueCurve(rpm) {
     }
   }
   return 0;
+}
+
+// Pre-compute peak power (W) from the WOT torque curve: max(T × omega)
+const PEAK_POWER = TORQUE_CURVE.reduce((max, [r, t]) => {
+  const p = t * r * RPM_TO_RADS;
+  return p > max ? p : max;
+}, 0);
+
+/**
+ * BeamNG-style constant-power throttle model.
+ * Throttle pedal scales power output, not torque.
+ *   target_power = PEAK_POWER × pedal
+ *   torque_out   = min(WOT_torque, target_power / omega)
+ *
+ * Effect: at low RPM, small pedal → high torque fraction (omega is small,
+ * so P/omega is large). At high RPM, pedal maps ~linearly to torque.
+ * This matches real throttle body physics: at low RPM the engine has time
+ * to fill cylinders even through a partially open throttle.
+ */
+function throttleTorque(rpm, pedal) {
+  const wotTorque = lerpTorqueCurve(rpm);
+  if (pedal >= 1) return wotTorque;
+  if (pedal <= 0) return 0;
+
+  const omega = rpm * RPM_TO_RADS;
+  if (omega <= 0) return wotTorque * pedal; // safety at 0 RPM
+
+  const targetPower = PEAK_POWER * pedal;
+  const powerLimitedTorque = targetPower / omega;
+  return Math.min(wotTorque, powerLimitedTorque);
 }
 
 // --- Drivetrain class ---
@@ -89,6 +120,7 @@ export class Drivetrain {
     this._oscDirection = 0;       // +1 upshift, -1 downshift
     this.shiftOscillation = 0;    // current oscillation value [-1, 1] — consumed by audio
     this.shiftOscAmplitude = 0;   // current decayed amplitude [0, 1] — consumed by audio
+    this._lastThrottle = 0;       // last throttle input for getState torque reporting
   }
 
   get isNeutral() {
@@ -124,7 +156,7 @@ export class Drivetrain {
       effectiveInertia: inGear
         ? ENGINE_INERTIA + VEHICLE_INERTIA / (totalRatio * totalRatio)
         : ENGINE_INERTIA,
-      torqueNm: inGear ? lerpTorqueCurve(this.rpm) : 0,
+      torqueNm: inGear ? throttleTorque(this.rpm, this._lastThrottle) : 0,
       // Shift oscillation (consumed by audio for detune + gain modulation)
       shiftOscillation: this.shiftOscillation,
       shiftOscAmplitude: this.shiftOscAmplitude,
@@ -166,6 +198,7 @@ export class Drivetrain {
   update(dt, throttle, braking = false) {
     dt = Math.min(dt, 0.05);
     throttle = Math.max(0, Math.min(1, throttle));
+    this._lastThrottle = throttle;
 
     // Handle shift completion
     if (this._shifting) {
@@ -197,10 +230,10 @@ export class Drivetrain {
       this.revLimiterActive = false;
     }
 
-    // Drive torque — scaled by continuous throttle position
+    // Drive torque — constant-power throttle model (BeamNG-style)
     let driveTorque = 0;
     if (throttle > 0 && !this.revLimiterActive) {
-      driveTorque = lerpTorqueCurve(this.rpm) * throttle;
+      driveTorque = throttleTorque(this.rpm, throttle);
     }
 
     // Resistance torque — engine braking scales with closed throttle
@@ -317,4 +350,4 @@ export class Drivetrain {
   }
 }
 
-export { GEAR_RATIOS, FINAL_DRIVE };
+export { GEAR_RATIOS, FINAL_DRIVE, PEAK_POWER, throttleTorque };
