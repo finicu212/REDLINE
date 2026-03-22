@@ -119,9 +119,9 @@ describe('EngineAudio — init', () => {
     expect(ea.masterGain).toBeTruthy();
   });
 
-  it('loads all 13 audio files', async () => {
+  it('loads all 15 audio files', async () => {
     await ea.init();
-    expect(ea.buffers.size).toBe(13);
+    expect(ea.buffers.size).toBe(15);
   });
 
   it('calls progress callback', async () => {
@@ -139,8 +139,8 @@ describe('EngineAudio — init', () => {
       return { arrayBuffer: async () => new ArrayBuffer(1024) };
     }));
     await ea.init();
-    // Should still load 12 of 13
-    expect(ea.buffers.size).toBe(12);
+    // Should still load 14 of 15
+    expect(ea.buffers.size).toBe(14);
   });
 });
 
@@ -438,8 +438,8 @@ describe('EngineAudio — edge cases', () => {
       rpm: 10000, throttle: true, gear: 5, speed: 200,
       shifting: false, revLimiterActive: false,
     })).not.toThrow();
-    // Should clamp detune to redline
-    expect(ea.debugDetune).toBeCloseTo((REDLINE_RPM - 1000) * 0.2, 0);
+    // Pitch follows RPM past redline (no clamp)
+    expect(ea.debugDetune).toBeCloseTo((10000 - 1000) * 0.2, 0);
   });
 
   it('handles missing oscillation fields gracefully', () => {
