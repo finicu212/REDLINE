@@ -169,6 +169,14 @@ export class EngineAudio {
     // Shift thud
     this._lastGear = -1;
 
+    // Turbo audio
+    this._turboOsc = null;       // whine oscillator
+    this._turboGain = null;      // whine gain
+    this._turboFilterNode = null;
+    this._bovNoiseSource = null;
+    this._bovGain = null;
+    this._bovActive = false;
+
     this._started = false;
 
     // Per-cylinder micro-variation: subtle per-fire jitter to break mechanical perfection
@@ -208,6 +216,24 @@ export class EngineAudio {
     this._dryGain.connect(this.masterGain);
     this._wetGain.connect(this.masterGain);
     this._setExhaustMix(this._exhaustWet);
+
+    // Turbo whine: sawtooth oscillator → bandpass filter → gain → engineBus
+    this._turboOsc = this.ctx.createOscillator();
+    this._turboOsc.type = 'sawtooth';
+    this._turboOsc.frequency.value = 400;
+
+    this._turboFilterNode = this.ctx.createBiquadFilter();
+    this._turboFilterNode.type = 'bandpass';
+    this._turboFilterNode.frequency.value = 2000;
+    this._turboFilterNode.Q.value = 3;
+
+    this._turboGain = this.ctx.createGain();
+    this._turboGain.gain.value = 0;
+
+    this._turboOsc.connect(this._turboFilterNode);
+    this._turboFilterNode.connect(this._turboGain);
+    this._turboGain.connect(this._engineBus);
+    this._turboOsc.start();
 
     let loaded = 0;
     for (const entry of ALL_FILES) {
@@ -349,6 +375,9 @@ export class EngineAudio {
       this._lastGear = gear;
     }
     if (shifting) this._lastGear = -1;
+
+    // --- 8. Turbo whine + BOV ---
+    this._updateTurboAudio(state, now);
   }
 
   setRPM(rpm, throttle = true) {
@@ -633,6 +662,67 @@ export class EngineAudio {
     gain.connect(this._engineBus);
     osc.start(now);
     osc.stop(now + 0.2);
+  }
+
+  // === Turbo audio ===
+
+  _updateTurboAudio(state, now) {
+    const { turboSpool = 0, boostPsi = 0, bovActive = false } = state;
+
+    // Turbo whine: pitch and volume scale with spool speed
+    if (this._turboOsc && this._turboGain) {
+      // Pitch: 400 Hz idle → 4000 Hz at full spool
+      const freq = 400 + turboSpool * 3600;
+      this._turboOsc.frequency.setTargetAtTime(freq, now, 0.08);
+      this._turboFilterNode.frequency.setTargetAtTime(freq * 1.2, now, 0.08);
+
+      // Volume: subtle whine, scales with spool² for natural feel
+      const vol = turboSpool * turboSpool * 0.08;
+      this._turboGain.gain.setTargetAtTime(vol, now, 0.05);
+    }
+
+    // BOV: burst of filtered noise when valve opens
+    if (bovActive && !this._bovActive) {
+      this._bovActive = true;
+      this._playBOV(boostPsi, now);
+    } else if (!bovActive) {
+      this._bovActive = false;
+    }
+  }
+
+  _playBOV(boostPsi, now) {
+    if (!this.ctx) return;
+
+    // Generate white noise burst
+    const duration = 0.25;
+    const sampleRate = this.ctx.sampleRate;
+    const samples = Math.floor(duration * sampleRate);
+    const buffer = this.ctx.createBuffer(1, samples, sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < samples; i++) {
+      data[i] = (Math.random() * 2 - 1);
+    }
+
+    const source = this.ctx.createBufferSource();
+    source.buffer = buffer;
+
+    // Bandpass to shape the hiss (centered around 1500 Hz)
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = 1500;
+    filter.Q.value = 1.5;
+
+    const gain = this.ctx.createGain();
+    // Volume scales with how much boost was present
+    const intensity = Math.min(1, boostPsi / 14.7);
+    gain.gain.value = 0.15 * intensity;
+    gain.gain.setTargetAtTime(0, now + 0.03, 0.07);
+
+    source.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.masterGain); // BOV bypasses engine bus (it's external)
+    source.start(now);
+    source.stop(now + duration);
   }
 
   // === Exhaust convolution reverb ===

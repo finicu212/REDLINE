@@ -28,6 +28,16 @@ const BRAKE_DECEL = 9.0;          // m/s² — vehicle deceleration under brakin
 
 const SHIFT_DURATION = 150;      // ms — clutch disengaged during shift
 
+// Turbocharger parameters
+const TURBO_MAX_PSI = 14.7;          // peak boost pressure (1 bar)
+const TURBO_SPOOL_TAU = 0.6;         // spool-up time constant (seconds) — lower = faster spool
+const TURBO_DESPOOL_TAU = 1.2;       // spool-down time constant (seconds)
+const TURBO_THRESHOLD_RPM = 2500;    // RPM below which turbo produces negligible boost
+const TURBO_FULL_RPM = 5500;         // RPM at which turbo reaches target boost (at WOT)
+const TURBO_BOOST_MULTIPLIER = 0.6;  // torque multiplier at max boost (60% more torque)
+const TURBO_WASTEGATE_PSI = 14.7;    // wastegate opens here
+const BOV_THRESHOLD_PSI = 3.0;       // BOV fires when boost is above this and throttle closes
+
 // Shift oscillation parameters
 const OSCILLATION_FREQ = 6;             // Hz — drivetrain natural frequency (lower = more visible on tacho)
 const OSCILLATION_DECAY_TAU = 0.35;     // seconds — exponential decay time constant
@@ -121,6 +131,13 @@ export class Drivetrain {
     this.shiftOscillation = 0;    // current oscillation value [-1, 1] — consumed by audio
     this.shiftOscAmplitude = 0;   // current decayed amplitude [0, 1] — consumed by audio
     this._lastThrottle = 0;       // last throttle input for getState torque reporting
+
+    // Turbo state
+    this.boostPsi = 0;               // current manifold pressure (psi above atmospheric)
+    this._turboSpoolNorm = 0;        // normalized spool speed 0–1
+    this._bovActive = false;         // blow-off valve currently venting
+    this._bovStartTime = 0;
+    this._prevThrottle = 0;          // for detecting throttle-lift BOV trigger
   }
 
   get isNeutral() {
@@ -161,6 +178,10 @@ export class Drivetrain {
       shiftOscillation: this.shiftOscillation,
       shiftOscAmplitude: this.shiftOscAmplitude,
       shiftOscRPMDelta: this._oscRPMDelta,
+      // Turbo
+      boostPsi: this.boostPsi,
+      turboSpool: this._turboSpoolNorm,
+      bovActive: this._bovActive,
     };
   }
 
@@ -230,10 +251,16 @@ export class Drivetrain {
       this.revLimiterActive = false;
     }
 
-    // Drive torque — constant-power throttle model (BeamNG-style)
+    // Update turbo spool
+    this._updateTurbo(dt, throttle);
+
+    // Drive torque — constant-power throttle model (BeamNG-style) + turbo boost
     let driveTorque = 0;
     if (throttle > 0 && !this.revLimiterActive) {
       driveTorque = throttleTorque(this.rpm, throttle);
+      // Boost adds torque proportional to manifold pressure
+      const boostFraction = this.boostPsi / TURBO_MAX_PSI;
+      driveTorque *= (1 + boostFraction * TURBO_BOOST_MULTIPLIER);
     }
 
     // Resistance torque — engine braking scales with closed throttle
@@ -281,6 +308,38 @@ export class Drivetrain {
         this.rpm = Math.max(IDLE_RPM, brakedRPM);
       }
     }
+  }
+
+  /** @private Turbo spool and BOV model. */
+  _updateTurbo(dt, throttle) {
+    // Target spool based on exhaust energy (RPM × throttle)
+    let targetSpool = 0;
+    if (this.rpm > TURBO_THRESHOLD_RPM && throttle > 0.05) {
+      const rpmFactor = Math.min(1, (this.rpm - TURBO_THRESHOLD_RPM) / (TURBO_FULL_RPM - TURBO_THRESHOLD_RPM));
+      targetSpool = rpmFactor * throttle;
+    }
+
+    // Spool dynamics: asymmetric — spools up slower than it spools down
+    const tau = targetSpool > this._turboSpoolNorm ? TURBO_SPOOL_TAU : TURBO_DESPOOL_TAU;
+    const alpha = 1 - Math.exp(-dt / tau);
+    this._turboSpoolNorm += (targetSpool - this._turboSpoolNorm) * alpha;
+
+    // Boost pressure from spool (squared — turbine power ∝ speed²)
+    const rawBoost = this._turboSpoolNorm * this._turboSpoolNorm * TURBO_MAX_PSI;
+    this.boostPsi = Math.min(rawBoost, TURBO_WASTEGATE_PSI);
+
+    // BOV: fires when throttle closes rapidly while boost is built up
+    const throttleDrop = this._prevThrottle - throttle;
+    if (throttleDrop > 0.3 && this.boostPsi > BOV_THRESHOLD_PSI && !this._bovActive) {
+      this._bovActive = true;
+      this._bovStartTime = performance.now();
+    }
+    // BOV vents for ~300ms
+    if (this._bovActive && performance.now() - this._bovStartTime > 300) {
+      this._bovActive = false;
+    }
+
+    this._prevThrottle = throttle;
   }
 
   /** @private */
@@ -350,4 +409,4 @@ export class Drivetrain {
   }
 }
 
-export { GEAR_RATIOS, FINAL_DRIVE, PEAK_POWER, throttleTorque };
+export { GEAR_RATIOS, FINAL_DRIVE, PEAK_POWER, TURBO_MAX_PSI, throttleTorque };

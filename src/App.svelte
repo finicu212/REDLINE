@@ -72,6 +72,11 @@
     --c-status-shift: #ffc107;
     --c-status-osc-bg: #1b2a3a;
     --c-status-osc: #42a5f5;
+
+    /* Turbo */
+    --c-bar-boost: #ce93d8;
+    --c-status-turbo-bg: #2a1b3a;
+    --c-status-turbo: #ce93d8;
   }
 
   :global(body) {
