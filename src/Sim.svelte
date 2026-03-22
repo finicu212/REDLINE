@@ -157,11 +157,12 @@
   }
 
   .hud {
-    height: 280px;
+    height: clamp(160px, 32vh, 280px);
     display: flex;
     align-items: flex-end;
     justify-content: space-between;
-    padding: 1.5rem;
+    padding: clamp(0.5rem, 2vw, 1.5rem);
+    gap: clamp(0.5rem, 2vw, 1rem);
   }
 
   .hud-left,
@@ -179,8 +180,13 @@
     gap: 0.5rem;
   }
 
+  .hud-left,
+  .hud-right {
+    flex-shrink: 0;
+  }
+
   .hint {
-    font-size: 0.7rem;
+    font-size: clamp(0.5rem, 1.2vw, 0.7rem);
     color: #555;
     letter-spacing: 0.1em;
     animation: fade 4s forwards;

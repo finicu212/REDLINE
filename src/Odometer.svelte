@@ -36,12 +36,13 @@
 <style>
   .odometer {
     font-family: 'Share Tech Mono', monospace;
-    font-size: 1.4rem;
+    font-size: clamp(0.9rem, 2.5vmin, 1.4rem);
     color: #ccc;
     background: #111;
-    padding: 0.4rem 0.8rem;
+    padding: clamp(0.2rem, 0.8vmin, 0.4rem) clamp(0.4rem, 1.2vmin, 0.8rem);
     border: 1px solid #333;
     border-radius: 4px;
     letter-spacing: 0.15em;
+    white-space: nowrap;
   }
 </style>

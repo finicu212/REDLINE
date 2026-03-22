@@ -77,7 +77,7 @@
   });
 </script>
 
-<svg width={svgWidth} height={svgHeight} viewBox="0 0 {svgWidth} {svgHeight}">
+<svg class="cylinder-svg" style="max-width: {svgWidth}px" viewBox="0 0 {svgWidth} {svgHeight}">
   {#each positions as pos, i}
     {@const col = getFiringColor(firingStates[i])}
     <g transform="translate({pos.x}, {pos.y}) rotate({pos.angle})">
@@ -106,3 +106,10 @@
     </g>
   {/each}
 </svg>
+
+<style>
+  .cylinder-svg {
+    width: clamp(180px, 60vw, 100%);
+    height: auto;
+  }
+</style>

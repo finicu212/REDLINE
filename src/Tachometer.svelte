@@ -5,6 +5,7 @@
   let { rpm = 850 } = $props();
 
   let canvasEl;
+  let containerEl;
 
   const SIZE = 280;
   const CENTER = SIZE / 2;
@@ -45,7 +46,7 @@
       smoothedRPM = rpm;
     }
 
-    ctx.clearRect(0, 0, SIZE, SIZE);
+    ctx.clearRect(0, 0, SIZE + 1, SIZE + 1);
 
     // --- Outer ring ---
     ctx.beginPath();
@@ -172,25 +173,55 @@
     ctx.fill();
   }
 
+  function updateCanvasSize() {
+    if (!containerEl || !canvasEl) return;
+    const rect = containerEl.getBoundingClientRect();
+    const cssSize = Math.min(rect.width, rect.height);
+    const dpr = window.devicePixelRatio || 1;
+    const bufferSize = Math.round(cssSize * dpr);
+    canvasEl.width = bufferSize;
+    canvasEl.height = bufferSize;
+    canvasEl.style.width = cssSize + 'px';
+    canvasEl.style.height = cssSize + 'px';
+  }
+
   onMount(() => {
-    const ctx = canvasEl.getContext('2d');
+    updateCanvasSize();
+    const ro = new ResizeObserver(updateCanvasSize);
+    ro.observe(containerEl);
+
     let animFrameId;
     let lastTime = performance.now();
 
     function frame(now) {
       const dt = (now - lastTime) / 1000;
       lastTime = now;
+      const ctx = canvasEl.getContext('2d');
+      const scale = canvasEl.width / SIZE;
+      ctx.save();
+      ctx.scale(scale, scale);
       drawTacho(ctx, Math.min(dt, 0.05));
+      ctx.restore();
       animFrameId = requestAnimationFrame(frame);
     }
     animFrameId = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(animFrameId);
+    return () => {
+      cancelAnimationFrame(animFrameId);
+      ro.disconnect();
+    };
   });
 </script>
 
-<canvas bind:this={canvasEl} width={SIZE} height={SIZE} class="tachometer"></canvas>
+<div bind:this={containerEl} class="tachometer-container">
+  <canvas bind:this={canvasEl} class="tachometer"></canvas>
+</div>
 
 <style>
+  .tachometer-container {
+    width: clamp(160px, 28vmin, 280px);
+    aspect-ratio: 1;
+  }
+
   .tachometer {
     display: block;
   }

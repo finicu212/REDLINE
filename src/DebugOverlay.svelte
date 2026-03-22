@@ -141,9 +141,10 @@
     border-radius: 6px;
     padding: 10px 12px;
     font-family: 'Share Tech Mono', monospace;
-    font-size: 0.65rem;
+    font-size: clamp(0.5rem, 1.2vmin, 0.65rem);
     color: #999;
-    min-width: 220px;
+    min-width: min(220px, 45vw);
+    max-width: min(280px, 50vw);
     z-index: 100;
     pointer-events: none;
   }
