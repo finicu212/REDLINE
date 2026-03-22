@@ -152,7 +152,7 @@
 <style>
   .debug-overlay {
     position: absolute;
-    top: 12px;
+    top: 44px;
     right: 12px;
     background: var(--c-bg-overlay);
     border: 1px solid var(--c-bg-panel);

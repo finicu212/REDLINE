@@ -30,6 +30,11 @@ const FRICTION_TORQUE = 8;       // Nm — constant mechanical friction
 const ENGINE_BRAKING_FACTOR = 12; // Nm — compression braking on closed throttle
 const BRAKE_DECEL = 9.0;          // m/s² — vehicle deceleration under braking (~0.9g)
 
+// Vehicle resistance (applied to speed directly, not through drivetrain)
+const ROLLING_RESISTANCE = 0.4;  // m/s² — tire deformation, bearing friction (~constant)
+const AERO_CD_A_RHO = 0.45;     // 0.5 * Cd * A * ρ (Cd≈0.3, A≈2m², ρ≈1.2) — combined aero constant
+const VEHICLE_MASS = 1300;       // kg — for F=ma aero drag deceleration
+
 // Idle air control — restoring torque that holds RPM near IDLE_RPM when decoupled
 const IDLE_TARGET_RPM = 850;
 const IDLE_RESTORE_GAIN = 15;    // Nm per 1000 RPM below target — simulates IAC valve
@@ -106,12 +111,20 @@ const PEAK_POWER = TORQUE_CURVE.reduce((max, [r, t]) => {
  * to fill cylinders even through a partially open throttle.
  */
 function throttleTorque(rpm, pedal) {
-  const wotTorque = lerpTorqueCurve(rpm);
-  if (pedal >= 1) return wotTorque;
   if (pedal <= 0) return 0;
 
+  // Base torque from curve, with falloff above redline (breathing limits)
+  let wotTorque = lerpTorqueCurve(rpm);
+  if (rpm > REDLINE_RPM) {
+    // Torque drops ~40% per 1000 RPM above redline (valve float, poor breathing)
+    const overRev = (rpm - REDLINE_RPM) / 1000;
+    wotTorque *= Math.max(0.05, 1 - 0.4 * overRev);
+  }
+
+  // Constant-power limit applies at ALL throttle positions including WOT.
+  // At high RPM, P/ω naturally reduces torque — prevents runaway on light inertia.
   const omega = rpm * RPM_TO_RADS;
-  if (omega <= 0) return wotTorque * pedal; // safety at 0 RPM
+  if (omega <= 0) return wotTorque * pedal;
 
   const targetPower = PEAK_POWER * pedal;
   const powerLimitedTorque = targetPower / omega;
@@ -293,8 +306,16 @@ export class Drivetrain {
     const closedThrottle = 1 - throttle;
     if (coupled) {
       resistanceTorque += ENGINE_BRAKING_FACTOR * totalRatio * closedThrottle;
+      // Aero + rolling drag reflected through drivetrain as engine resistance torque
+      const v = this.speed / 3.6; // m/s
+      const dragForce = AERO_CD_A_RHO * v * v + ROLLING_RESISTANCE * VEHICLE_MASS;
+      const wheelRadius = TIRE_CIRCUMFERENCE / (2 * Math.PI);
+      resistanceTorque += (dragForce * wheelRadius) / totalRatio;
     } else {
-      resistanceTorque += ENGINE_BRAKING_FACTOR * 0.3 * closedThrottle;
+      // Decoupled: compression braking + pumping losses scale with RPM
+      resistanceTorque += ENGINE_BRAKING_FACTOR * 1.2 * closedThrottle;
+      // RPM-proportional friction (pumping losses increase with speed)
+      resistanceTorque += (this.rpm / 1000) * 4.0 * closedThrottle;
     }
 
     if (this.revLimiterActive) {
@@ -316,9 +337,13 @@ export class Drivetrain {
       const engineAlpha = (driveTorque - resistanceTorque + clutchTorque) / ENGINE_INERTIA;
       this.rpm += engineAlpha * dt * RADS_TO_RPM;
 
-      // Apply reaction to wheel side
+      // Apply reaction to wheel side (including aero + rolling drag)
       const wheelJ = VEHICLE_INERTIA / (totalRatio * totalRatio);
-      this._wheelOmega += (-clutchTorque / wheelJ) * dt;
+      const v = this.speed / 3.6;
+      const dragForce = AERO_CD_A_RHO * v * v + ROLLING_RESISTANCE * VEHICLE_MASS;
+      const wheelRadius = TIRE_CIRCUMFERENCE / (2 * Math.PI);
+      const dragTorqueAtEngine = (dragForce * wheelRadius) / totalRatio;
+      this._wheelOmega += ((-clutchTorque - dragTorqueAtEngine) / wheelJ) * dt;
 
       // Derive speed from wheel omega
       this.speed = Math.max(0, (this._wheelOmega * RADS_TO_RPM / totalRatio) * TIRE_CIRCUMFERENCE / 60 * 3.6);
@@ -362,8 +387,13 @@ export class Drivetrain {
 
       this.rpm += (netTorque / ENGINE_INERTIA) * dt * RADS_TO_RPM;
 
-      // Vehicle coasts (rolling resistance)
-      this.speed = Math.max(0, this.speed - this.speed * 0.3 * dt);
+      // Vehicle coasts — rolling resistance + aero drag
+      if (this.speed > 0) {
+        const v = this.speed / 3.6; // m/s
+        const aeroDrag = AERO_CD_A_RHO * v * v / VEHICLE_MASS; // m/s²
+        const decel = ROLLING_RESISTANCE + aeroDrag;
+        this.speed = Math.max(0, this.speed - decel * dt * 3.6);
+      }
     }
 
     // Clear oscillation when not engaging

@@ -5,7 +5,7 @@
 
 export const IDLE_RPM = 850;
 export const REDLINE_RPM = 7200;       // rev limiter kicks in here
-export const REV_CUT_RPM = 7050;       // fuel resumes here (~2% hysteresis — tight bounce)
+export const REV_CUT_RPM = 7150;       // fuel resumes here (~0.7% hysteresis — very tight bounce)
 export const MAX_RPM = 9000;           // hard ceiling — allows over-rev (no engine damage modeled)
 
 // Tachometer display range (dial goes higher than redline for visual headroom)

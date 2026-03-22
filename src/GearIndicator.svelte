@@ -1,9 +1,9 @@
 <script>
-  let { gear = 'N', speed = 0 } = $props();
+  let { gear = 'N', speed = 0, clutchHeld = false } = $props();
 </script>
 
 <div class="gear-hud">
-  <div class="gear-display">{gear}</div>
+  <div class="gear-display" class:clutch-in={clutchHeld}>{gear}</div>
   <div class="speed-display">{Math.round(speed)} <span class="unit">km/h</span></div>
 </div>
 
@@ -21,6 +21,11 @@
     color: var(--c-accent);
     text-shadow: 0 0 16px var(--c-accent-glow-strong);
     line-height: 1;
+    transition: opacity 0.08s;
+  }
+
+  .gear-display.clutch-in {
+    opacity: 0.45;
   }
 
   .speed-display {

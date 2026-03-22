@@ -5,12 +5,13 @@
 
   const STORAGE_KEY = 'redline_km';
 
-  let km = $state(parseFloat(localStorage.getItem(STORAGE_KEY)) || 0);
+  let stored = parseFloat(localStorage.getItem(STORAGE_KEY));
+  let km = $state(Number.isFinite(stored) ? stored : 0);
 
   let display = $derived(String(Math.floor(km)).padStart(6, '0') + ' KM');
 
   $effect(() => {
-    localStorage.setItem(STORAGE_KEY, String(km));
+    if (Number.isFinite(km)) localStorage.setItem(STORAGE_KEY, String(km));
   });
 
   onMount(() => {
@@ -21,7 +22,7 @@
       const dt = (now - lastTime) / 1000;
       lastTime = now;
 
-      if (speed > 0) {
+      if (Number.isFinite(speed) && speed > 0) {
         km += (speed / 3600) * dt; // km/h → km/s → km per frame
       }
       animFrameId = requestAnimationFrame(loop);

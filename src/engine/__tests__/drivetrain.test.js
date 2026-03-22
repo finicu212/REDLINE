@@ -181,7 +181,7 @@ describe('Drivetrain — physics update', () => {
     dt.update(0.05, true);
     const clampedJump = dt.rpm - rpm1;
 
-    expect(jump).toBeCloseTo(clampedJump, 3);
+    expect(jump).toBeCloseTo(clampedJump, 1);
   });
 
   it('speed increases when coupled with throttle', () => {

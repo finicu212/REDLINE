@@ -263,18 +263,16 @@ export class EngineAudio {
 
     const { rpm, throttle, gear, speed, shifting, revLimiterActive,
             shiftOscillation = 0, shiftOscAmplitude = 0, shiftOscRPMDelta = 0 } = state;
-    const clamped = Math.max(IDLE_RPM, Math.min(rpm, REDLINE_RPM));
-    const nRPM = normalizeRPM(clamped);
+    const pitchRPM = Math.max(IDLE_RPM, rpm);  // pitch follows actual RPM past redline
+    const nRPM = normalizeRPM(Math.min(rpm, REDLINE_RPM)); // gain crossfade stays in normal range
     const now = this.ctx.currentTime;
 
     // --- 1. Pitch via detune + shift oscillation wobble + per-cylinder jitter ---
-    const baseDetune = rpmToDetune(clamped);
+    const baseDetune = rpmToDetune(pitchRPM);
     const detuneWobble = shiftOscillation * 45;
 
     // Per-cylinder micro-variation: advance fire counter based on RPM
-    // At 6000 RPM with 4 cylinders: 200 fires/sec. We approximate by advancing
-    // the counter each frame proportional to RPM, cycling through cylinder offsets.
-    const firesPerSec = (clamped / 60) * (this._cylCount / 2); // 4-stroke: fires = RPM/60 * cyl/2
+    const firesPerSec = (pitchRPM / 60) * (this._cylCount / 2); // 4-stroke: fires = RPM/60 * cyl/2
     this._fireCount += firesPerSec * (1 / 60); // assume ~60fps
     const cylIdx = Math.floor(this._fireCount) % this._cylDetuneOffsets.length;
     const microDetune = this._cylDetuneOffsets[cylIdx];
@@ -303,7 +301,8 @@ export class EngineAudio {
     // Partial throttle blending: on-samples scale with throttle, off-samples
     // fill the gap. At 30% throttle you hear quiet on-samples + louder off-samples.
     // Equal-power curves keep total energy constant across the blend.
-    const throttleVal = Math.max(0, Math.min(1, throttle));
+    // Rev limiter = fuel cut = off-throttle sound (engine is coasting even if pedal is down)
+    const throttleVal = revLimiterActive ? 0 : Math.max(0, Math.min(1, throttle));
     const onGain  = Math.sin(throttleVal * Math.PI / 2);   // 0→0, 0.5→0.71, 1→1
     const offGain = Math.cos(throttleVal * Math.PI / 2);   // 0→1, 0.5→0.71, 1→0
     // Additional volume scaling: on-samples get quieter at low throttle
@@ -311,12 +310,14 @@ export class EngineAudio {
     const onVolume = 0.3 + 0.7 * throttleVal;              // 0→0.3, 0.5→0.65, 1→1
 
     // RPM crossfade: low ↔ high (3000–6500 RPM)
-    const { gain1: highGain, gain2: lowGain } = crossFade(clamped, RPM_XFADE_LOW, RPM_XFADE_HIGH);
+    const { gain1: highGain, gain2: lowGain } = crossFade(pitchRPM, RPM_XFADE_LOW, RPM_XFADE_HIGH);
 
-    // REV crossfade for on-throttle near redline (scales with throttle)
+    // REV crossfade for on-throttle near redline — only when actually combusting
+    // (not during rev limiter fuel cut, not off-throttle)
+    const actualThrottle = Math.max(0, Math.min(1, throttle));
     let revBlend = 0;
-    if (throttleVal > 0.3 && nRPM > REV_BLEND_START) {
-      revBlend = Math.min(1, (nRPM - REV_BLEND_START) / (REV_BLEND_END - REV_BLEND_START)) * throttleVal;
+    if (!revLimiterActive && actualThrottle > 0.3 && nRPM > REV_BLEND_START) {
+      revBlend = Math.min(1, (nRPM - REV_BLEND_START) / (REV_BLEND_END - REV_BLEND_START)) * actualThrottle;
     }
     const pitchedMix = Math.cos(revBlend * Math.PI / 2);
     const revMix = Math.sin(revBlend * Math.PI / 2);
@@ -338,7 +339,7 @@ export class EngineAudio {
     }
 
     // Extra off-throttle layers (mid, veryhigh) — blend in off-throttle mid range
-    const midBlend = Math.max(0, 1 - Math.abs(clamped - 4500) / 2000); // peaks at 4500
+    const midBlend = Math.max(0, 1 - Math.abs(pitchRPM - 4500) / 2000); // peaks at 4500
     const vhBlend = highGain * 0.5; // subtle top-end addition
     if (this._extraOffGains.off_mid) {
       this._extraOffGains.off_mid.gain.setTargetAtTime(offGain * midBlend * 0.6, now, 0.05);
@@ -350,14 +351,16 @@ export class EngineAudio {
     // --- 3. REV layer ---
     this._ensureRevSource(now);
     if (this._revGain) {
-      this._revGain.gain.setTargetAtTime(revMix, now, 0.05);
+      // Fast decay (0.01s) when cutting, slower attack (0.05s) when blending in
+      const revTau = revMix > this._revGain.gain.value ? 0.05 : 0.01;
+      this._revGain.gain.setTargetAtTime(revMix, now, revTau);
     }
 
     // --- 4. Transmission decel layers ---
-    this._updateDecelLayers(offGain, clamped, detune, now);
+    this._updateDecelLayers(offGain, pitchRPM, detune, now);
 
-    // --- 5. Rev limiter ---
-    this._updateLimiter(revLimiterActive, now);
+    // --- 5. Rev limiter (only audible when driver is on throttle — no fuel cut sound when coasting) ---
+    this._updateLimiter(revLimiterActive && actualThrottle > 0.1, now);
 
     // --- 6. Transmission whine (with oscillation modulation) ---
     this._updateTransmission(speed, gear, gainMod, now);

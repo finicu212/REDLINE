@@ -309,7 +309,7 @@
       {#if showHint}
         <p class="hint">{isTouchDevice ? 'DRAG UP to rev' : 'SPACE / DRAG UP to rev'}</p>
       {/if}
-      <GearIndicator gear={drivetrain.clutchHeld ? '·' + gearLabel : gearLabel} {speed} />
+      <GearIndicator gear={gearLabel} {speed} clutchHeld={drivetrain.clutchHeld} />
     </div>
 
     <button class="info-btn" onclick={() => showControls = !showControls}>CONTROLS</button>
