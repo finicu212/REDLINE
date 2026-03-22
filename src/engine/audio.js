@@ -69,6 +69,47 @@ const RPM_XFADE_HIGH = 6500;
 const REV_BLEND_START = 0.995;
 const REV_BLEND_END = 0.999;
 
+// --- Exhaust IR generator ---
+
+/**
+ * Procedurally generate a short impulse response simulating exhaust pipe resonance.
+ * Models a tube resonator: initial impulse followed by decaying reflections at the
+ * round-trip delay interval, with phase inversion at open-end bounces.
+ */
+function generateExhaustIR(ctx, { pipeLength = 1.5, diameter = 0.08, reflections = 12 } = {}) {
+  const c = 343; // speed of sound m/s
+  const roundTrip = (2 * pipeLength) / c;
+  const sampleRate = ctx.sampleRate;
+  const delaySamples = Math.round(roundTrip * sampleRate);
+
+  const irLength = delaySamples * reflections + 128;
+  const buffer = ctx.createBuffer(1, irLength, sampleRate);
+  const data = buffer.getChannelData(0);
+
+  // Wider pipes lose less energy per bounce
+  const diameterFactor = Math.min(1, diameter / 0.1);
+  const decayPerBounce = 0.35 + 0.25 * diameterFactor;
+
+  // Direct sound
+  data[0] = 1.0;
+
+  // Reflected impulses with progressive decay
+  let amplitude = 1.0;
+  for (let i = 1; i <= reflections; i++) {
+    amplitude *= decayPerBounce;
+    const sign = (i % 2 === 0) ? 1 : -1; // open-end reflection inverts phase
+    const pos = i * delaySamples;
+    if (pos < irLength) {
+      // Spread impulse slightly to simulate HF wall absorption
+      data[pos] = sign * amplitude * 0.7;
+      if (pos + 1 < irLength) data[pos + 1] = sign * amplitude * 0.2;
+      if (pos - 1 >= 0) data[pos - 1] += sign * amplitude * 0.1;
+    }
+  }
+
+  return buffer;
+}
+
 // --- Crossfade helper (matching markeasting's equal-power) ---
 
 function crossFade(value, start, end) {
@@ -116,6 +157,15 @@ export class EngineAudio {
     this._decelSources = {};
     this._decelGains = {};
 
+    // Exhaust convolution reverb
+    this._engineBus = null;
+    this._convolver = null;
+    this._dryGain = null;
+    this._wetGain = null;
+    this._pipeLength = 1.5;
+    this._pipeDiameter = 0.08;
+    this._exhaustWet = 0.3;
+
     // Shift thud
     this._lastGear = -1;
 
@@ -139,6 +189,25 @@ export class EngineAudio {
     this.masterGain = this.ctx.createGain();
     this.masterGain.gain.value = 0.5;
     this.masterGain.connect(this.ctx.destination);
+
+    // Engine bus → dry/wet split → masterGain
+    this._engineBus = this.ctx.createGain();
+    this._engineBus.gain.value = 1.0;
+
+    this._dryGain = this.ctx.createGain();
+    this._wetGain = this.ctx.createGain();
+    this._convolver = this.ctx.createConvolver();
+    this._convolver.buffer = generateExhaustIR(this.ctx, {
+      pipeLength: this._pipeLength,
+      diameter: this._pipeDiameter,
+    });
+
+    this._engineBus.connect(this._dryGain);
+    this._engineBus.connect(this._convolver);
+    this._convolver.connect(this._wetGain);
+    this._dryGain.connect(this.masterGain);
+    this._wetGain.connect(this.masterGain);
+    this._setExhaustMix(this._exhaustWet);
 
     let loaded = 0;
     for (const entry of ALL_FILES) {
@@ -311,7 +380,7 @@ export class EngineAudio {
 
       const gain = this.ctx.createGain();
       gain.gain.value = 0;
-      gain.connect(this.masterGain);
+      gain.connect(this._engineBus);
 
       const source = this.ctx.createBufferSource();
       source.buffer = buf;
@@ -330,7 +399,7 @@ export class EngineAudio {
 
       const gain = this.ctx.createGain();
       gain.gain.value = 0;
-      gain.connect(this.masterGain);
+      gain.connect(this._engineBus);
 
       const source = this.ctx.createBufferSource();
       source.buffer = buf;
@@ -349,7 +418,7 @@ export class EngineAudio {
 
       const gain = this.ctx.createGain();
       gain.gain.value = 0;
-      gain.connect(this.masterGain);
+      gain.connect(this._engineBus);
 
       const source = this.ctx.createBufferSource();
       source.buffer = buf;
@@ -434,7 +503,7 @@ export class EngineAudio {
 
     this._revGain = this.ctx.createGain();
     this._revGain.gain.value = 0;
-    this._revGain.connect(this.masterGain);
+    this._revGain.connect(this._engineBus);
 
     this._revSource = this.ctx.createBufferSource();
     this._revSource.buffer = buf;
@@ -461,7 +530,7 @@ export class EngineAudio {
       if (!buf) return;
       this._limiterGain = this.ctx.createGain();
       this._limiterGain.gain.value = 0;
-      this._limiterGain.connect(this.masterGain);
+      this._limiterGain.connect(this._engineBus);
 
       this._limiterSource = this.ctx.createBufferSource();
       this._limiterSource.buffer = buf;
@@ -496,7 +565,7 @@ export class EngineAudio {
       if (!buf) return;
       this._tranyGain = this.ctx.createGain();
       this._tranyGain.gain.value = 0;
-      this._tranyGain.connect(this.masterGain);
+      this._tranyGain.connect(this._engineBus);
 
       this._tranySource = this.ctx.createBufferSource();
       this._tranySource.buffer = buf;
@@ -561,8 +630,37 @@ export class EngineAudio {
     gain.gain.setTargetAtTime(0, now + 0.01, decayTau);
 
     osc.connect(gain);
-    gain.connect(this.masterGain);
+    gain.connect(this._engineBus);
     osc.start(now);
     osc.stop(now + 0.2);
+  }
+
+  // === Exhaust convolution reverb ===
+
+  _setExhaustMix(wet) {
+    this._exhaustWet = Math.max(0, Math.min(1, wet));
+    if (this._dryGain) this._dryGain.gain.value = Math.cos(this._exhaustWet * Math.PI / 2);
+    if (this._wetGain) this._wetGain.gain.value = Math.sin(this._exhaustWet * Math.PI / 2);
+  }
+
+  /**
+   * Update exhaust pipe parameters at runtime.
+   * @param {object} opts
+   * @param {number} [opts.pipeLength] - pipe length in meters (0.5–3.0)
+   * @param {number} [opts.diameter] - pipe diameter in meters (0.04–0.15)
+   * @param {number} [opts.wetMix] - dry/wet mix 0–1
+   */
+  setExhaustParams({ pipeLength, diameter, wetMix } = {}) {
+    if (!this.ctx || !this._convolver) return;
+    let regenerate = false;
+    if (pipeLength !== undefined) { this._pipeLength = pipeLength; regenerate = true; }
+    if (diameter !== undefined) { this._pipeDiameter = diameter; regenerate = true; }
+    if (regenerate) {
+      this._convolver.buffer = generateExhaustIR(this.ctx, {
+        pipeLength: this._pipeLength,
+        diameter: this._pipeDiameter,
+      });
+    }
+    if (wetMix !== undefined) this._setExhaustMix(wetMix);
   }
 }
