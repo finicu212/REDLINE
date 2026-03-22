@@ -51,6 +51,10 @@
       spaceHeld = true;
       showHint = false;
     }
+    if ((e.code === 'KeyC' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !e.repeat) {
+      clutchHeld = true;
+      drivetrain.clutchHeld = true;
+    }
     if (e.code === 'ArrowUp' && !e.repeat) {
       e.preventDefault();
       drivetrain.shiftUp();
@@ -61,9 +65,6 @@
     }
     if ((e.code === 'KeyS' || e.code === 'KeyB') && !e.repeat) {
       braking = true;
-    }
-    if (e.code === 'KeyC' && !e.repeat) {
-      clutchHeld = true;
     }
     if (e.code === 'Backquote' && !e.repeat) {
       showDebug = !showDebug;
@@ -77,8 +78,9 @@
     if (e.code === 'KeyS' || e.code === 'KeyB') {
       braking = false;
     }
-    if (e.code === 'KeyC') {
+    if (e.code === 'KeyC' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
       clutchHeld = false;
+      drivetrain.clutchHeld = false;
     }
   }
 
@@ -143,8 +145,8 @@
   function onShiftDownTouch(e) { e.preventDefault(); drivetrain.shiftDown(); }
   function onBrakeStart(e) { e.preventDefault(); touchBraking = true; }
   function onBrakeEnd(e) { e.preventDefault(); touchBraking = false; }
-  function onClutchStart(e) { e.preventDefault(); touchClutch = true; }
-  function onClutchEnd(e) { e.preventDefault(); touchClutch = false; }
+  function onClutchStart(e) { e.preventDefault(); touchClutch = true; drivetrain.clutchHeld = true; }
+  function onClutchEnd(e) { e.preventDefault(); touchClutch = false; drivetrain.clutchHeld = false; }
 
   // --- Gamepad polling (called each frame) ---
   function pollGamepad() {
@@ -320,7 +322,7 @@
             <div class="controls-heading">Keyboard + Mouse</div>
             <div class="controls-row"><span class="controls-key">SPACE</span> Full throttle</div>
             <div class="controls-row"><span class="controls-key">CLICK+DRAG UP</span> Proportional throttle</div>
-            <div class="controls-row"><span class="controls-key">C</span> Clutch (hold to shift)</div>
+            <div class="controls-row"><span class="controls-key">SHIFT / C</span> Clutch (hold to shift)</div>
             <div class="controls-row"><span class="controls-key">{'\u2191'} {'\u2193'}</span> Shift up / down</div>
             <div class="controls-row"><span class="controls-key">S / B</span> Brake</div>
             <div class="controls-row"><span class="controls-key">`</span> Toggle debug</div>
