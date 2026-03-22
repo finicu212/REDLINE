@@ -61,17 +61,14 @@ describe('Drivetrain — clutch and shifting', () => {
     dt = new Drivetrain();
   });
 
-  it('cannot shift without clutch when in gear', () => {
-    // Get into 1st gear first
-    dt.clutchHeld = true;
-    dt.update(0.001, 0);
-    dt.shiftUp(); // N -> 1 (from neutral, ok)
-    dt.clutchHeld = false;
-    dt.update(0.001, 0);
-
-    // Now in 1st, try to shift without clutch
+  it('can shift without clutch (clutchless shift triggers engagement)', () => {
+    dt.shiftUp(); // N -> 1
     expect(dt.gear).toBe(1);
-    expect(dt.shiftUp()).toBe(false);
+    dt.speed = 60;
+    dt.rpm = 5000;
+    // Shift without clutch — should work and trigger spring-damper
+    expect(dt.shiftUp()).toBe(true);
+    expect(dt.gear).toBe(2);
   });
 
   it('can shift from neutral without clutch', () => {
@@ -137,9 +134,11 @@ describe('Drivetrain — physics update', () => {
     dt = new Drivetrain();
   });
 
-  it('RPM stays at idle with no throttle in neutral', () => {
-    dt.update(0.016, false);
-    expect(dt.rpm).toBe(IDLE_RPM);
+  it('RPM stays near idle with no throttle in neutral', () => {
+    for (let i = 0; i < 10; i++) dt.update(0.016, 0);
+    // Idle air control + flutter means RPM hovers near but not exactly at IDLE_RPM
+    expect(dt.rpm).toBeGreaterThanOrEqual(IDLE_RPM - 20);
+    expect(dt.rpm).toBeLessThan(IDLE_RPM + 50);
   });
 
   it('RPM increases with throttle in neutral', () => {
@@ -157,10 +156,11 @@ describe('Drivetrain — physics update', () => {
     expect(dt.rpm).toBeGreaterThan(startRPM);
   });
 
-  it('RPM never drops below IDLE_RPM', () => {
+  it('RPM stays near idle even with friction', () => {
     dt.rpm = IDLE_RPM;
-    dt.update(0.1, false);
-    expect(dt.rpm).toBeGreaterThanOrEqual(IDLE_RPM);
+    for (let i = 0; i < 20; i++) dt.update(0.016, 0);
+    // Idle air control prevents RPM from collapsing far below idle
+    expect(dt.rpm).toBeGreaterThanOrEqual(IDLE_RPM - 20);
   });
 
   it('RPM never exceeds MAX_RPM', () => {

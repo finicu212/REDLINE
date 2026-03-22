@@ -62,7 +62,7 @@
     <!-- Row: RPM -->
     <span class="label">RPM</span>
     <div class="bar-container">
-      <div class="bar rpm-bar" style="width: {data ? Math.min(100, (data.rpm / 7200) * 100) : 0}%"></div>
+      <div class="bar rpm-bar" class:overrev={data?.rpm > 7200} style="width: {data ? Math.min(100, (data.rpm / 9000) * 100) : 0}%"></div>
       <span class="bar-value">{fmt(data?.rpm, 0)}</span>
     </div>
 
@@ -101,7 +101,8 @@
       {#if data?.throttle > 0}<span class="indicator on">THR {(data.throttle * 100).toFixed(0)}%</span>{/if}
       {#if data?.braking}<span class="indicator brake">BRK</span>{/if}
       {#if data?.revLimiterActive}<span class="indicator limiter">LIM</span>{/if}
-      {#if data?.shifting}<span class="indicator shift">SHF</span>{/if}
+      {#if data?.clutchHeld}<span class="indicator clutch">CLT</span>{/if}
+      {#if data?.clutchEngaging}<span class="indicator shift">ENG</span>{/if}
       <span class="indicator" class:osc-active={data?.shiftOscAmplitude > 0.01}>OSC</span>
       {#if data?.bovActive}<span class="indicator bov">BOV</span>{/if}
       <span class="indicator" class:turbo-active={(data?.turboSpool || 0) > 0.1}>TRB {((data?.turboSpool || 0) * 100).toFixed(0)}%</span>
@@ -207,6 +208,7 @@
   }
 
   .rpm-bar { background: var(--c-bar-rpm); }
+  .rpm-bar.overrev { background: #ff3030; }
   .speed-bar { background: var(--c-bar-speed); }
   .torque-bar { background: var(--c-bar-torque); }
   .throttle-bar { background: var(--c-bar-throttle, #4caf50); }
@@ -242,6 +244,7 @@
   .on { background: var(--c-status-on-bg); color: var(--c-status-on); }
   .brake { background: var(--c-status-brake-bg); color: var(--c-status-brake); }
   .limiter { background: var(--c-status-limiter-bg); color: var(--c-status-limiter); }
+  .clutch { background: #1a2a15; color: #b4ff64; }
   .shift { background: var(--c-status-shift-bg); color: var(--c-status-shift); }
   .osc-active { background: var(--c-status-osc-bg); color: var(--c-status-osc); }
   .bov { background: var(--c-status-turbo-bg, #2a1b3a); color: var(--c-status-turbo, #ce93d8); }

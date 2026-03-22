@@ -30,6 +30,14 @@ const FRICTION_TORQUE = 8;       // Nm — constant mechanical friction
 const ENGINE_BRAKING_FACTOR = 12; // Nm — compression braking on closed throttle
 const BRAKE_DECEL = 9.0;          // m/s² — vehicle deceleration under braking (~0.9g)
 
+// Idle air control — restoring torque that holds RPM near IDLE_RPM when decoupled
+const IDLE_TARGET_RPM = 850;
+const IDLE_RESTORE_GAIN = 15;    // Nm per 1000 RPM below target — simulates IAC valve
+
+// Idle fluctuation — per-cylinder firing impulse makes idle imperfect
+const IDLE_FLUTTER_RPM = 15;     // ±RPM amplitude of idle flutter
+const IDLE_FLUTTER_HZ = 14;      // ~4-cyl at 850 RPM × 2 fires/rev ≈ 14 Hz
+
 // Turbocharger parameters — small-frame turbo (BeamNG-style exhaust energy model)
 // Small turbine = low inertia = fast spool. Full boost from ~3000 RPM at WOT.
 const TURBO_INERTIA = 0.00008;       // kg·m² — turbine wheel moment of inertia (small = fast)
@@ -132,6 +140,7 @@ export class Drivetrain {
     this.shiftOscillation = 0;    // current oscillation value [-1, 1] — consumed by audio
     this.shiftOscAmplitude = 0;   // current decayed amplitude [0, 1] — consumed by audio
     this._lastThrottle = 0;
+    this._time = 0;              // accumulated time for idle flutter
 
     // Turbo state — BeamNG-style exhaust energy → shaft speed → boost
     this.boostPsi = 0;               // manifold gauge pressure
@@ -158,7 +167,7 @@ export class Drivetrain {
     const coupled = this.gear > 0 && !this.clutchHeld && !this._clutchEngaging;
     const totalRatio = this.gear > 0 ? GEAR_RATIOS[this.gear] * FINAL_DRIVE : 0;
     return {
-      rpm: Math.max(IDLE_RPM, Math.min(MAX_RPM, this.rpm)),
+      rpm: Math.max(IDLE_RPM, this.rpm),
       speed: this.speed,
       gear: this.gear,
       gearLabel: this.gearLabel,
@@ -183,20 +192,40 @@ export class Drivetrain {
     };
   }
 
-  /** Shift up. Requires clutch to be held (or in neutral). */
+  /** Shift up. Works with or without clutch. Without clutch, triggers spring-damper. */
   shiftUp() {
-    if (!this.clutchHeld && this.gear > 0) return false;
     if (this.gear >= 5) return false;
+    const hadClutch = this.clutchHeld;
     this.gear += 1;
+    if (!hadClutch && this.gear > 0 && this.speed > 0) this._engageClutch();
     return true;
   }
 
-  /** Shift down. Requires clutch to be held. No over-rev protection. */
+  /** Shift down. Works with or without clutch. No over-rev protection. */
   shiftDown() {
-    if (!this.clutchHeld && this.gear > 0) return false;
     if (this.gear <= 0) return false;
+    const hadClutch = this.clutchHeld;
     this.gear -= 1;
+    if (!hadClutch && this.gear > 0 && this.speed > 0) this._engageClutch();
     return true;
+  }
+
+  /** @private Trigger spring-damper engagement from current state. */
+  _engageClutch() {
+    const totalRatio = GEAR_RATIOS[this.gear] * FINAL_DRIVE;
+    const wheelRPS = (this.speed / 3.6) / TIRE_CIRCUMFERENCE;
+    const wheelRPM = wheelRPS * 60 * totalRatio;
+    const rpmDelta = wheelRPM - this.rpm;
+
+    if (Math.abs(rpmDelta) > 100) {
+      this._clutchEngaging = true;
+      this._wheelOmega = wheelRPM * RPM_TO_RADS;
+      this._clutchAngleDelta = 0;
+      this._clutchInitialDelta = rpmDelta;
+      this._oscRPMDelta = rpmDelta;
+    } else {
+      this.rpm = Math.max(IDLE_RPM, Math.min(MAX_RPM, wheelRPM));
+    }
   }
 
   /**
@@ -209,6 +238,7 @@ export class Drivetrain {
     dt = Math.min(dt, 0.05);
     throttle = Math.max(0, Math.min(1, throttle));
     this._lastThrottle = throttle;
+    this._time += dt;
 
     const totalRatio = this.gear > 0 ? GEAR_RATIOS[this.gear] * FINAL_DRIVE : 0;
 
@@ -322,7 +352,14 @@ export class Drivetrain {
       this.speed = (wheelRPM * TIRE_CIRCUMFERENCE / 60) * 3.6;
     } else {
       // Decoupled (neutral or clutch held) — engine revs freely
-      const netTorque = driveTorque - resistanceTorque;
+      let netTorque = driveTorque - resistanceTorque;
+
+      // Idle air control: restoring torque pulls RPM back toward idle target
+      if (throttle < 0.05 && this.rpm < IDLE_TARGET_RPM + 200) {
+        const deficit = (IDLE_TARGET_RPM - this.rpm) / 1000; // per 1000 RPM
+        netTorque += IDLE_RESTORE_GAIN * deficit;
+      }
+
       this.rpm += (netTorque / ENGINE_INERTIA) * dt * RADS_TO_RPM;
 
       // Vehicle coasts (rolling resistance)
@@ -335,9 +372,15 @@ export class Drivetrain {
       this.shiftOscAmplitude = 0;
     }
 
-    // Clamp RPM
+    // Floor RPM at idle (never stall)
     if (this.rpm < IDLE_RPM) this.rpm = IDLE_RPM;
-    if (this.rpm > MAX_RPM) this.rpm = MAX_RPM;
+    // No hard ceiling — engine can over-rev past redline (limiter provides resistance)
+
+    // Idle flutter: per-cylinder firing pulses make idle imperfect
+    if (this.rpm < IDLE_RPM + 100 && throttle < 0.05) {
+      const flutter = IDLE_FLUTTER_RPM * Math.sin(2 * Math.PI * IDLE_FLUTTER_HZ * this._time);
+      this.rpm += flutter * dt * 60; // scale by dt so it's frame-rate independent
+    }
 
     // Braking: decelerates the vehicle (wheels), not the engine directly.
     if (braking && this.speed > 0) {

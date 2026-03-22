@@ -312,7 +312,7 @@
       <GearIndicator gear={drivetrain.clutchHeld ? '·' + gearLabel : gearLabel} {speed} />
     </div>
 
-    <button class="info-btn" onclick={() => showControls = !showControls}>?</button>
+    <button class="info-btn" onclick={() => showControls = !showControls}>CONTROLS</button>
 
     {#if showControls}
       <div class="controls-popup" onclick={() => showControls = false}>
@@ -422,27 +422,24 @@
   .info-btn {
     position: absolute;
     top: 12px;
-    left: 12px;
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    border: 1px solid var(--c-border-subtle);
-    background: var(--c-bg-overlay);
-    color: var(--c-text-ghost);
+    right: 12px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(20, 20, 30, 0.7);
+    color: rgba(255, 255, 255, 0.6);
     font-family: 'Share Tech Mono', monospace;
-    font-size: 0.8rem;
+    font-size: clamp(0.6rem, 1.2vw, 0.75rem);
+    letter-spacing: 0.1em;
     cursor: pointer;
     z-index: 90;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
+    padding: 0.35em 0.8em;
     -webkit-tap-highlight-color: transparent;
   }
 
   .info-btn:hover {
-    border-color: var(--c-text-muted);
-    color: var(--c-text-muted);
+    border-color: rgba(255, 255, 255, 0.4);
+    color: rgba(255, 255, 255, 0.85);
+    background: rgba(30, 30, 45, 0.8);
   }
 
   .controls-popup {
