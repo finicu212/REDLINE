@@ -1,14 +1,11 @@
-# Dotfiles and dotfolders
-.*
-
-# But track .gitignore itself
-!.gitignore
-
 # Dependencies
 node_modules/
 
 # Build output
 dist/
+
+# Test coverage
+coverage/
 
 # OS files
 Thumbs.db
@@ -21,5 +18,3 @@ Desktop.ini
 
 # Logs
 *.log
-
-CLAUDE.md
