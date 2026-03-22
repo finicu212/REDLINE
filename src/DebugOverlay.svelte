@@ -79,11 +79,18 @@
       <span class="bar-value">{fmt(data?.torqueNm, 0)} Nm</span>
     </div>
 
+    <!-- Row: Throttle -->
+    <span class="label">THR</span>
+    <div class="bar-container">
+      <div class="bar throttle-bar" style="width: {data ? (data.throttle || 0) * 100 : 0}%"></div>
+      <span class="bar-value">{fmt(data?.throttle * 100, 0)}%</span>
+    </div>
+
     <!-- Row: Gear + indicators -->
     <span class="label">GER</span>
     <div class="indicators">
       <span class="indicator gear-ind">{data?.gearLabel || 'N'}</span>
-      {#if data?.throttle}<span class="indicator on">THR</span>{/if}
+      {#if data?.throttle > 0}<span class="indicator on">THR {(data.throttle * 100).toFixed(0)}%</span>{/if}
       {#if data?.braking}<span class="indicator brake">BRK</span>{/if}
       {#if data?.revLimiterActive}<span class="indicator limiter">LIM</span>{/if}
       {#if data?.shifting}<span class="indicator shift">SHF</span>{/if}
@@ -192,6 +199,7 @@
   .rpm-bar { background: #ff4020; }
   .speed-bar { background: #2196f3; }
   .torque-bar { background: #ff9800; }
+  .throttle-bar { background: #4caf50; }
   .inertia-bar { background: #9c27b0; }
   .pbr-bar { background: #4caf50; }
 

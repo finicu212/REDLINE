@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
 
-  let { rpm = 850, cylinders = 4, layout = 'inline', throttle = false } = $props();
+  let { rpm = 850, cylinders = 4, layout = 'inline', throttle = 0 } = $props();
 
   const FIRING_ORDERS = {
     4: [0, 2, 3, 1],
@@ -45,7 +45,7 @@
 
   function getFiringColor(firing) {
     if (!firing) return { fill: COL_IDLE, stroke: '#444', glow: '' };
-    if (throttle) return { fill: COL_POWER, stroke: COL_POWER_STROKE, glow: `filter: drop-shadow(0 0 12px ${COL_POWER_GLOW})` };
+    if (throttle > 0.1) return { fill: COL_POWER, stroke: COL_POWER_STROKE, glow: `filter: drop-shadow(0 0 12px ${COL_POWER_GLOW})` };
     return { fill: COL_BRAKE, stroke: COL_BRAKE_STROKE, glow: `filter: drop-shadow(0 0 10px ${COL_BRAKE_GLOW})` };
   }
 

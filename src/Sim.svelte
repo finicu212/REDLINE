@@ -12,7 +12,10 @@
   let rpm = $state(850);
   let speed = $state(0);
   let gearLabel = $state('N');
-  let revving = $state(false);
+  let throttle = $state(0);       // continuous 0–1
+  let mouseHeld = $state(false);
+  let mouseThrottle = $state(0);  // throttle from mouse Y position
+  let spaceHeld = $state(false);
   let braking = $state(false);
   let showHint = $state(true);
   let showDebug = $state(true);
@@ -25,7 +28,7 @@
   function onKeyDown(e) {
     if (e.code === 'Space' && !e.repeat) {
       e.preventDefault();
-      revving = true;
+      spaceHeld = true;
       showHint = false;
     }
     if (e.code === 'ArrowUp' && !e.repeat) {
@@ -46,20 +49,28 @@
 
   function onKeyUp(e) {
     if (e.code === 'Space') {
-      revving = false;
+      spaceHeld = false;
     }
     if (e.code === 'KeyS' || e.code === 'KeyB') {
       braking = false;
     }
   }
 
-  function onMouseDown() {
-    revving = true;
+  function onMouseDown(e) {
+    mouseHeld = true;
+    mouseThrottle = 1 - (e.clientY / window.innerHeight);
     showHint = false;
   }
 
   function onMouseUp() {
-    revving = false;
+    mouseHeld = false;
+    mouseThrottle = 0;
+  }
+
+  function onMouseMove(e) {
+    if (mouseHeld) {
+      mouseThrottle = 1 - (e.clientY / window.innerHeight);
+    }
   }
 
   onMount(() => {
@@ -67,6 +78,7 @@
     window.addEventListener('keyup', onKeyUp);
     window.addEventListener('mousedown', onMouseDown);
     window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('mousemove', onMouseMove);
 
     let animFrameId;
     let lastTime = performance.now();
@@ -75,10 +87,14 @@
       const dt = (now - lastTime) / 1000;
       lastTime = now;
 
-      drivetrain.update(dt, revving, braking);
+      // Combine inputs: space = full throttle, mouse Y = analog, take max
+      throttle = Math.max(spaceHeld ? 1 : 0, mouseHeld ? mouseThrottle : 0);
+      throttle = Math.max(0, Math.min(1, throttle));
+
+      drivetrain.update(dt, throttle, braking);
 
       const state = drivetrain.getState();
-      state.throttle = revving;
+      state.throttle = throttle;
 
       rpm = state.rpm;
       speed = state.speed;
@@ -89,6 +105,7 @@
       if (showDebug) {
         debugState = {
           ...state,
+          throttle,
           braking,
           dt,
           bandGains: engineAudio ? { ...engineAudio.debugBandGains } : {},
@@ -107,6 +124,7 @@
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('mousedown', onMouseDown);
       window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('mousemove', onMouseMove);
       if (engineAudio) engineAudio.stop();
     };
   });
@@ -114,7 +132,7 @@
 
 <div class="sim">
   <div class="cylinder-area">
-    <CylinderBank {rpm} cylinders={config.cylinders} layout={config.layout} throttle={revving} />
+    <CylinderBank {rpm} cylinders={config.cylinders} layout={config.layout} {throttle} />
   </div>
 
   {#if showDebug && debugState}
@@ -128,7 +146,7 @@
 
     <div class="hud-center">
       {#if showHint || showDebug}
-        <p class="hint" class:hint-persist={showDebug}>SPACE / CLICK rev &middot; S / B brake &middot; UP/DOWN shift &middot; ` debug</p>
+        <p class="hint" class:hint-persist={showDebug}>SPACE full rev &middot; CLICK+DRAG analog throttle &middot; S / B brake &middot; UP/DOWN shift &middot; ` debug</p>
       {/if}
       <GearIndicator gear={gearLabel} {speed} />
     </div>

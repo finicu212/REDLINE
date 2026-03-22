@@ -160,11 +160,12 @@ export class Drivetrain {
   /**
    * Update physics. Call every frame.
    * @param {number} dt - delta time in seconds
-   * @param {boolean} throttle - true if throttle is open
+   * @param {number} throttle - throttle position 0–1
    * @param {boolean} braking - true if brake is applied
    */
   update(dt, throttle, braking = false) {
     dt = Math.min(dt, 0.05);
+    throttle = Math.max(0, Math.min(1, throttle));
 
     // Handle shift completion
     if (this._shifting) {
@@ -196,20 +197,19 @@ export class Drivetrain {
       this.revLimiterActive = false;
     }
 
-    // Drive torque
+    // Drive torque — scaled by continuous throttle position
     let driveTorque = 0;
-    if (throttle && !this.revLimiterActive) {
-      driveTorque = lerpTorqueCurve(this.rpm);
+    if (throttle > 0 && !this.revLimiterActive) {
+      driveTorque = lerpTorqueCurve(this.rpm) * throttle;
     }
 
-    // Resistance torque
+    // Resistance torque — engine braking scales with closed throttle
     let resistanceTorque = FRICTION_TORQUE;
-    if (!throttle) {
-      if (inGear) {
-        resistanceTorque += ENGINE_BRAKING_FACTOR * totalRatio;
-      } else {
-        resistanceTorque += ENGINE_BRAKING_FACTOR * 0.3;
-      }
+    const closedThrottle = 1 - throttle;
+    if (inGear) {
+      resistanceTorque += ENGINE_BRAKING_FACTOR * totalRatio * closedThrottle;
+    } else {
+      resistanceTorque += ENGINE_BRAKING_FACTOR * 0.3 * closedThrottle;
     }
 
     if (this.revLimiterActive) {

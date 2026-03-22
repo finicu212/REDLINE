@@ -195,17 +195,17 @@ export class EngineAudio {
     const gainMod = 1.0 - shiftOscillation * 0.30;
 
     // --- 2. Crossfade gains ---
-    // Throttle crossfade: on ↔ off
-    const throttleVal = throttle ? 1 : 0;
+    // Throttle crossfade: on ↔ off (continuous 0–1)
+    const throttleVal = Math.max(0, Math.min(1, throttle));
     const { gain1: onGain, gain2: offGain } = crossFade(throttleVal, 0, 1);
 
     // RPM crossfade: low ↔ high (3000–6500 RPM)
     const { gain1: highGain, gain2: lowGain } = crossFade(clamped, RPM_XFADE_LOW, RPM_XFADE_HIGH);
 
-    // REV crossfade for on-throttle near redline
+    // REV crossfade for on-throttle near redline (scales with throttle)
     let revBlend = 0;
-    if (throttle && nRPM > REV_BLEND_START) {
-      revBlend = Math.min(1, (nRPM - REV_BLEND_START) / (REV_BLEND_END - REV_BLEND_START));
+    if (throttleVal > 0.3 && nRPM > REV_BLEND_START) {
+      revBlend = Math.min(1, (nRPM - REV_BLEND_START) / (REV_BLEND_END - REV_BLEND_START)) * throttleVal;
     }
     const pitchedMix = Math.cos(revBlend * Math.PI / 2);
     const revMix = Math.sin(revBlend * Math.PI / 2);
