@@ -19,6 +19,7 @@
   const THROTTLE_DRAG_PX = 120;   // pixels of upward drag for 100% throttle
   let spaceHeld = $state(false);
   let braking = $state(false);
+  let clutchHeld = $state(false);
   let showHint = $state(true);
   let showControls = $state(false);
   let isTouchDevice = $state(false);
@@ -36,6 +37,7 @@
   // --- Gamepad state ---
   let gamepadThrottle = $state(0);
   let gamepadBraking = $state(false);
+  let gamepadClutch = $state(false);
   let gpShiftUpPrev = false;
   let gpShiftDownPrev = false;
 
@@ -60,6 +62,9 @@
     if ((e.code === 'KeyS' || e.code === 'KeyB') && !e.repeat) {
       braking = true;
     }
+    if (e.code === 'KeyC' && !e.repeat) {
+      clutchHeld = true;
+    }
     if (e.code === 'Backquote' && !e.repeat) {
       showDebug = !showDebug;
     }
@@ -71,6 +76,9 @@
     }
     if (e.code === 'KeyS' || e.code === 'KeyB') {
       braking = false;
+    }
+    if (e.code === 'KeyC') {
+      clutchHeld = false;
     }
   }
 
@@ -130,10 +138,13 @@
   }
 
   // Button handlers for on-screen controls
+  let touchClutch = $state(false);
   function onShiftUpTouch(e) { e.preventDefault(); drivetrain.shiftUp(); }
   function onShiftDownTouch(e) { e.preventDefault(); drivetrain.shiftDown(); }
   function onBrakeStart(e) { e.preventDefault(); touchBraking = true; }
   function onBrakeEnd(e) { e.preventDefault(); touchBraking = false; }
+  function onClutchStart(e) { e.preventDefault(); touchClutch = true; }
+  function onClutchEnd(e) { e.preventDefault(); touchClutch = false; }
 
   // --- Gamepad polling (called each frame) ---
   function pollGamepad() {
@@ -149,9 +160,12 @@
     gamepadThrottle = gp.buttons[7] ? gp.buttons[7].value : 0;
     gamepadBraking = gp.buttons[6] ? gp.buttons[6].value > 0.1 : false;
 
-    // RB (buttons[5]) = shift up, LB (buttons[4]) = shift down — edge-triggered
+    // LB (buttons[4]) = clutch (hold)
+    gamepadClutch = gp.buttons[4] ? gp.buttons[4].pressed : false;
+
+    // RB (buttons[5]) = shift up, dpad down (buttons[13]) = shift down — edge-triggered
     const shiftUp = gp.buttons[5] ? gp.buttons[5].pressed : false;
-    const shiftDown = gp.buttons[4] ? gp.buttons[4].pressed : false;
+    const shiftDown = gp.buttons[13] ? gp.buttons[13].pressed : false;
 
     if (shiftUp && !gpShiftUpPrev) drivetrain.shiftUp();
     if (shiftDown && !gpShiftDownPrev) drivetrain.shiftDown();
@@ -193,6 +207,9 @@
       );
       throttle = Math.max(0, Math.min(1, throttle));
       const isBraking = braking || touchBraking || gamepadBraking;
+
+      // Clutch: OR all input sources
+      drivetrain.clutchHeld = clutchHeld || touchClutch || gamepadClutch;
 
       drivetrain.update(dt, throttle, isBraking);
 
@@ -256,6 +273,11 @@
   {#if isTouchDevice}
     <div class="touch-controls">
       <div class="touch-left">
+        <button class="touch-btn clutch-btn"
+          ontouchstart={onClutchStart}
+          ontouchend={onClutchEnd}
+          ontouchcancel={onClutchEnd}
+        >CLT</button>
         <button class="touch-btn brake-btn"
           ontouchstart={onBrakeStart}
           ontouchend={onBrakeEnd}
@@ -286,7 +308,7 @@
       {#if showHint}
         <p class="hint">{isTouchDevice ? 'DRAG UP to rev' : 'SPACE / DRAG UP to rev'}</p>
       {/if}
-      <GearIndicator gear={gearLabel} {speed} />
+      <GearIndicator gear={drivetrain.clutchHeld ? '·' + gearLabel : gearLabel} {speed} />
     </div>
 
     <button class="info-btn" onclick={() => showControls = !showControls}>?</button>
@@ -299,6 +321,7 @@
             <div class="controls-heading">Keyboard + Mouse</div>
             <div class="controls-row"><span class="controls-key">SPACE</span> Full throttle</div>
             <div class="controls-row"><span class="controls-key">CLICK+DRAG UP</span> Proportional throttle</div>
+            <div class="controls-row"><span class="controls-key">C</span> Clutch (hold to shift)</div>
             <div class="controls-row"><span class="controls-key">{'\u2191'} {'\u2193'}</span> Shift up / down</div>
             <div class="controls-row"><span class="controls-key">S / B</span> Brake</div>
             <div class="controls-row"><span class="controls-key">`</span> Toggle debug</div>
@@ -306,13 +329,16 @@
           <div class="controls-section">
             <div class="controls-heading">Touch</div>
             <div class="controls-row"><span class="controls-key">DRAG UP</span> Throttle</div>
+            <div class="controls-row"><span class="controls-key">CLT</span> Hold clutch, then shift</div>
             <div class="controls-row"><span class="controls-key">{'\u2191'} {'\u2193'} BRK</span> On-screen buttons</div>
           </div>
           <div class="controls-section">
             <div class="controls-heading">Gamepad</div>
             <div class="controls-row"><span class="controls-key">RT</span> Throttle</div>
             <div class="controls-row"><span class="controls-key">LT</span> Brake</div>
-            <div class="controls-row"><span class="controls-key">RB / LB</span> Shift up / down</div>
+            <div class="controls-row"><span class="controls-key">LB</span> Clutch (hold to shift)</div>
+            <div class="controls-row"><span class="controls-key">RB</span> Shift up</div>
+            <div class="controls-row"><span class="controls-key">DPAD {'\u2193'}</span> Shift down</div>
           </div>
           <button class="controls-close" onclick={() => showControls = false}>CLOSE</button>
         </div>
@@ -565,6 +591,17 @@
   .touch-btn:active {
     background: rgba(255, 255, 255, 0.15);
     color: #fff;
+  }
+
+  .clutch-btn {
+    font-size: 0.7rem;
+    color: rgba(180, 255, 100, 0.6);
+    border-color: rgba(180, 255, 100, 0.25);
+  }
+
+  .clutch-btn:active {
+    background: rgba(180, 255, 100, 0.2);
+    color: #bf6;
   }
 
   .brake-btn {

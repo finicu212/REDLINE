@@ -2,12 +2,26 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Drivetrain, GEAR_RATIOS, FINAL_DRIVE } from '../drivetrain.js';
 import { IDLE_RPM, REDLINE_RPM, REV_CUT_RPM, MAX_RPM } from '../constants.js';
 
-// Mock performance.now for shift timing
+// Mock performance.now for timing
 let mockNow = 0;
 vi.stubGlobal('performance', { now: () => mockNow });
 
 function advanceTime(ms) {
   mockNow += ms;
+}
+
+/** Helper: hold clutch, shift, release clutch, run frames until settled. */
+function clutchShift(dt, direction, throttle = 0.5, frames = 200) {
+  dt.clutchHeld = true;
+  dt.update(0.001, throttle); // one frame with clutch held
+  if (direction > 0) dt.shiftUp();
+  else dt.shiftDown();
+  dt.clutchHeld = false;
+  dt.update(0.001, throttle); // release triggers engagement
+  for (let i = 0; i < frames; i++) {
+    advanceTime(8);
+    dt.update(0.008, throttle);
+  }
 }
 
 describe('Drivetrain — construction', () => {
@@ -18,9 +32,9 @@ describe('Drivetrain — construction', () => {
     expect(dt.speed).toBe(0);
   });
 
-  it('isNeutral is true in gear 0', () => {
+  it('isDecoupled is true in neutral', () => {
     const dt = new Drivetrain();
-    expect(dt.isNeutral).toBe(true);
+    expect(dt.isDecoupled).toBe(true);
   });
 
   it('gearLabel is "N" in neutral', () => {
@@ -40,88 +54,86 @@ describe('Drivetrain — construction', () => {
   });
 });
 
-describe('Drivetrain — gear shifting', () => {
+describe('Drivetrain — clutch and shifting', () => {
   let dt;
   beforeEach(() => {
     mockNow = 0;
     dt = new Drivetrain();
   });
 
-  it('can shift from neutral to 1st', () => {
-    expect(dt.shiftUp()).toBe(true);
-    // During shift, gearLabel is "-"
-    expect(dt.gearLabel).toBe('-');
-    expect(dt._shifting).toBe(true);
-  });
+  it('cannot shift without clutch when in gear', () => {
+    // Get into 1st gear first
+    dt.clutchHeld = true;
+    dt.update(0.001, 0);
+    dt.shiftUp(); // N -> 1 (from neutral, ok)
+    dt.clutchHeld = false;
+    dt.update(0.001, 0);
 
-  it('cannot shift up past 5th', () => {
-    dt.gear = 5;
+    // Now in 1st, try to shift without clutch
+    expect(dt.gear).toBe(1);
     expect(dt.shiftUp()).toBe(false);
   });
 
-  it('cannot shift down from neutral', () => {
-    expect(dt.shiftDown()).toBe(false);
-  });
-
-  it('cannot double-shift while shifting', () => {
-    dt.shiftUp(); // N -> 1
-    expect(dt.shiftUp()).toBe(false); // already shifting
-  });
-
-  it('completes shift after SHIFT_DURATION', () => {
-    dt.shiftUp(); // N -> 1
-    advanceTime(200); // > 150ms shift duration
-    dt.update(0.016, false);
-    expect(dt._shifting).toBe(false);
+  it('can shift from neutral without clutch', () => {
+    expect(dt.shiftUp()).toBe(true);
     expect(dt.gear).toBe(1);
-    expect(dt.gearLabel).toBe('1');
   });
 
-  it('shifts through all gears sequentially', () => {
-    for (let g = 1; g <= 5; g++) {
-      dt.shiftUp();
-      advanceTime(200);
-      dt.update(0.016, true);
-      expect(dt.gear).toBe(g);
-    }
-  });
-
-  it('shifts down from 3rd to 2nd', () => {
-    // Get to 3rd gear
-    dt.gear = 3;
-    dt.rpm = 4000;
-    dt.speed = 60;
-    expect(dt.shiftDown()).toBe(true);
-    advanceTime(200);
-    dt.update(0.016, false);
+  it('can shift with clutch held', () => {
+    dt.clutchHeld = true;
+    dt.update(0.001, 0);
+    dt.shiftUp(); // N -> 1
+    expect(dt.gear).toBe(1);
+    dt.shiftUp(); // 1 -> 2
     expect(dt.gear).toBe(2);
   });
 
+  it('cannot shift up past 5th', () => {
+    dt.clutchHeld = true;
+    dt.update(0.001, 0);
+    for (let i = 0; i < 5; i++) dt.shiftUp();
+    expect(dt.gear).toBe(5);
+    expect(dt.shiftUp()).toBe(false);
+  });
+
+  it('cannot shift below neutral', () => {
+    expect(dt.shiftDown()).toBe(false);
+  });
+
+  it('clutch held decouples engine', () => {
+    dt.gear = 2;
+    dt.rpm = 3000;
+    dt.speed = 60;
+    dt.clutchHeld = true;
+    dt.update(0.001, 0);
+    expect(dt.isDecoupled).toBe(true);
+  });
+
   it('over-rev protection blocks dangerous downshifts', () => {
-    dt.gear = 5;
-    dt.speed = 200; // very high speed
+    dt.clutchHeld = true;
+    dt.update(0.001, 0);
+    for (let i = 0; i < 5; i++) dt.shiftUp();
+    expect(dt.gear).toBe(5);
+    dt.speed = 200;
     dt.rpm = 6000;
-    // Downshift to 4th at 200 km/h would exceed MAX_RPM
-    const result = dt.shiftDown();
-    // If projected RPM > MAX_RPM, should be blocked
+
     const newRatio = GEAR_RATIOS[4] * FINAL_DRIVE;
     const wheelRPS = (200 / 3.6) / 1.88;
     const projectedRPM = wheelRPS * 60 * newRatio;
     if (projectedRPM > MAX_RPM) {
-      expect(result).toBe(false);
+      expect(dt.shiftDown()).toBe(false);
     } else {
-      expect(result).toBe(true);
+      expect(dt.shiftDown()).toBe(true);
     }
   });
 
-  it('allows downshift to neutral regardless of speed', () => {
-    dt.gear = 1;
-    dt.speed = 100;
-    dt.rpm = 6000;
-    expect(dt.shiftDown()).toBe(true);
-    advanceTime(200);
-    dt.update(0.016, false);
-    expect(dt.gear).toBe(0);
+  it('gear label shows number when clutch not held', () => {
+    dt.clutchHeld = true;
+    dt.update(0.001, 0);
+    dt.shiftUp();
+    dt.clutchHeld = false;
+    dt.update(0.001, 0);
+    expect(dt.gearLabel).toBe('1');
   });
 });
 
@@ -134,7 +146,6 @@ describe('Drivetrain — physics update', () => {
 
   it('RPM stays at idle with no throttle in neutral', () => {
     dt.update(0.016, false);
-    // Should stay at idle (friction brings it down, clamped to idle)
     expect(dt.rpm).toBe(IDLE_RPM);
   });
 
@@ -143,7 +154,10 @@ describe('Drivetrain — physics update', () => {
     expect(dt.rpm).toBeGreaterThan(IDLE_RPM);
   });
 
-  it('RPM increases with throttle in gear', () => {
+  it('RPM increases with throttle in gear (coupled)', () => {
+    dt.shiftUp(); // N -> 1
+    dt.clutchHeld = false;
+    dt.update(0.001, 0);
     dt.gear = 1;
     const startRPM = IDLE_RPM;
     dt.update(0.05, true);
@@ -152,35 +166,35 @@ describe('Drivetrain — physics update', () => {
 
   it('RPM never drops below IDLE_RPM', () => {
     dt.rpm = IDLE_RPM;
-    dt.update(0.1, false); // no throttle, friction
+    dt.update(0.1, false);
     expect(dt.rpm).toBeGreaterThanOrEqual(IDLE_RPM);
   });
 
   it('RPM never exceeds MAX_RPM', () => {
     dt.rpm = MAX_RPM - 10;
-    // Many rapid throttle updates
     for (let i = 0; i < 100; i++) {
       dt.update(0.05, true);
     }
     expect(dt.rpm).toBeLessThanOrEqual(MAX_RPM);
   });
 
-  it('dt is clamped to 50ms to prevent physics explosions', () => {
+  it('dt is clamped to 50ms', () => {
     dt.gear = 1;
     const rpm1 = dt.rpm;
-    dt.update(5.0, true); // 5 seconds in one call — should be clamped
+    dt.update(5.0, true);
     const jump = dt.rpm - rpm1;
 
     dt.rpm = rpm1;
-    dt.update(0.05, true); // 50ms (the clamp)
+    dt.update(0.05, true);
     const clampedJump = dt.rpm - rpm1;
 
-    // 5s update should produce same result as 50ms (clamped)
     expect(jump).toBeCloseTo(clampedJump, 3);
   });
 
-  it('speed increases when in gear with throttle', () => {
-    dt.gear = 1;
+  it('speed increases when coupled with throttle', () => {
+    dt.shiftUp(); // N -> 1
+    dt.clutchHeld = false;
+    dt.update(0.001, 0); // release clutch
     dt.rpm = 3000;
     dt.update(0.05, true);
     expect(dt.speed).toBeGreaterThan(0);
@@ -190,6 +204,20 @@ describe('Drivetrain — physics update', () => {
     dt.speed = 100;
     dt.update(0.05, false);
     expect(dt.speed).toBeLessThan(100);
+  });
+
+  it('engine revs freely when clutch is held', () => {
+    dt.gear = 2;
+    dt.rpm = 3000;
+    dt.speed = 60;
+    dt.clutchHeld = true;
+    dt.update(0.001, 0);
+    // With clutch held and throttle, engine should rev on engine inertia only (faster)
+    const rpmBefore = dt.rpm;
+    advanceTime(100);
+    dt.update(0.1, 1.0);
+    // Engine revs up much faster since decoupled from vehicle mass
+    expect(dt.rpm).toBeGreaterThan(rpmBefore + 500);
   });
 });
 
@@ -224,8 +252,7 @@ describe('Drivetrain — rev limiter', () => {
     dt.rpm = REDLINE_RPM - 50;
     dt.revLimiterActive = true;
     const rpmBefore = dt.rpm;
-    dt.update(0.016, true); // throttle ON but limiter blocks it
-    // RPM should decrease or stay (resistance torque > 0, drive torque = 0)
+    dt.update(0.016, true);
     expect(dt.rpm).toBeLessThanOrEqual(rpmBefore);
   });
 });
@@ -241,7 +268,7 @@ describe('Drivetrain — braking', () => {
     dt.speed = 100;
     dt.gear = 3;
     dt.rpm = 4000;
-    dt.update(0.05, false, true); // braking = true
+    dt.update(0.05, false, true);
     expect(dt.speed).toBeLessThan(100);
   });
 
@@ -251,23 +278,22 @@ describe('Drivetrain — braking', () => {
     expect(dt.speed).toBeGreaterThanOrEqual(0);
   });
 
-  it('RPM syncs to braked wheel speed when in gear', () => {
+  it('RPM syncs to braked wheel speed when coupled', () => {
+    dt.shiftUp(); // N -> 1
     dt.gear = 3;
     dt.rpm = 5000;
     dt.speed = 100;
     dt.update(0.05, false, true);
-    // RPM should drop along with speed
     expect(dt.rpm).toBeLessThan(5000);
     expect(dt.rpm).toBeGreaterThanOrEqual(IDLE_RPM);
   });
 
-  it('braking in neutral only slows car, not engine', () => {
+  it('braking in neutral only slows car', () => {
     dt.gear = 0;
     dt.rpm = 3000;
     dt.speed = 80;
     dt.update(0.05, false, true);
     expect(dt.speed).toBeLessThan(80);
-    // In neutral, RPM decays from friction but not from braking directly
   });
 });
 
@@ -276,129 +302,96 @@ describe('Drivetrain — clutch spring-damper engagement', () => {
   beforeEach(() => {
     mockNow = 0;
     dt = new Drivetrain();
-    dt.gear = 2;
+    // Get to 2nd gear at speed
+    dt.clutchHeld = true;
+    dt.update(0.001, 0);
+    dt.shiftUp(); // 1
+    dt.shiftUp(); // 2
+    dt.clutchHeld = false;
+    dt.rpm = 5000;
+    dt.speed = 80;
+    dt.update(0.001, 0.5); // release clutch, snap (small delta at this point)
+    // Now stably in 2nd
     dt.rpm = 5000;
     dt.speed = 80;
   });
 
-  it('activates on gear change with significant RPM delta', () => {
+  it('activates on clutch release with RPM mismatch', () => {
+    // Rev up with clutch held, then release
+    dt.clutchHeld = true;
+    dt.update(0.001, 0);
     dt.shiftUp(); // 2 -> 3
-    advanceTime(200);
-    dt.update(0.016, true);
-    // Clutch should be engaging after shift completes
+    dt.rpm = 6000; // engine over-revved relative to wheel speed in 3rd
+    dt.clutchHeld = false;
+    dt.update(0.001, 0.5); // release triggers engagement
     expect(dt._clutchEngaging).toBe(true);
   });
 
-  it('does not activate from neutral', () => {
-    dt.gear = 0;
-    dt.rpm = 3000;
-    dt.speed = 0;
-    dt.shiftUp(); // N -> 1
-    advanceTime(200);
-    dt.update(0.016, true);
-    // oldGear was 0, so clutch engagement should NOT trigger
-    expect(dt._clutchEngaging).toBe(false);
-  });
-
-  it('engine RPM moves toward wheel RPM during engagement', () => {
-    const preShiftRPM = dt.rpm;
-    dt.shiftUp(); // 2 -> 3 (RPM should drop for upshift)
-    advanceTime(200);
-    dt.update(0.016, 0.5);
-
-    // Engine RPM should be moving toward wheel-derived target (lower for upshift)
-    // After first frame of engagement, RPM should have started moving
-    expect(dt._clutchEngaging).toBe(true);
-    // Run a few more frames to see convergence
-    for (let i = 0; i < 30; i++) {
-      advanceTime(16);
-      dt.update(0.016, 0.5);
-    }
-    // RPM should have moved significantly from pre-shift value
-    expect(Math.abs(dt.rpm - preShiftRPM)).toBeGreaterThan(50);
-  });
-
-  it('initial RPM delta is recorded for audio', () => {
-    dt.rpm = 6500;
-    dt.speed = 100;
+  it('engine RPM converges toward wheel RPM', () => {
+    dt.clutchHeld = true;
+    dt.update(0.001, 0);
     dt.shiftUp(); // 2 -> 3
-    advanceTime(200);
-    dt.update(0.016, 0.5);
+    dt.rpm = 6000;
+    const preRPM = dt.rpm;
+    dt.clutchHeld = false;
+    dt.update(0.001, 0.5);
 
-    // _oscRPMDelta should be non-zero and negative (upshift = RPM drops)
-    expect(dt._oscRPMDelta).toBeLessThan(-100);
-    // shiftOscAmplitude should be non-zero during engagement
-    expect(dt.shiftOscAmplitude).toBeGreaterThan(0);
-  });
-
-  it('converges and settles (clutch locks)', () => {
-    dt.shiftUp();
-    advanceTime(200);
-
-    // Run many frames — spring-damper should converge
-    for (let i = 0; i < 200; i++) {
-      advanceTime(16);
-      dt.update(0.016, 0.5);
-    }
-
-    // Should have settled
-    expect(dt._clutchEngaging).toBe(false);
-    expect(dt.shiftOscillation).toBe(0);
-    expect(dt.shiftOscAmplitude).toBe(0);
-  });
-
-  it('oscillation value swings positive and negative', () => {
-    dt.shiftUp();
-    advanceTime(200);
-
-    const values = [];
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 100; i++) {
       advanceTime(8);
       dt.update(0.008, 0.5);
-      if (dt._clutchEngaging) {
-        values.push(dt.shiftOscillation);
-      }
     }
-
-    const hasPositive = values.some(v => v > 0.01);
-    const hasNegative = values.some(v => v < -0.01);
-    expect(hasPositive).toBe(true);
-    expect(hasNegative).toBe(true);
+    expect(Math.abs(dt.rpm - preRPM)).toBeGreaterThan(50);
   });
 
-  it('frequency emerges from spring-damper physics (not hardcoded)', () => {
-    // The oscillation frequency should depend on gear because the
-    // reflected vehicle inertia changes. Just verify that oscillation
-    // actually occurs with multiple zero-crossings in different gears.
-    function countCrossings(startGear, rpm, speed) {
-      mockNow = 0;
-      const d = new Drivetrain();
-      d.gear = startGear;
-      d.rpm = rpm;
-      d.speed = speed;
-      d.shiftUp();
-      advanceTime(200);
+  it('settles (clutch locks) after enough time', () => {
+    dt.clutchHeld = true;
+    dt.update(0.001, 0);
+    dt.shiftUp();
+    dt.rpm = 6000;
+    dt.clutchHeld = false;
+    dt.update(0.001, 0.5);
 
-      let crossings = 0;
-      let prevSign = 0;
-      for (let i = 0; i < 400; i++) {
-        advanceTime(2);
-        d.update(0.002, 0.5);
-        const sign = Math.sign(d.shiftOscillation);
-        if (sign !== 0 && prevSign !== 0 && sign !== prevSign) crossings++;
-        if (sign !== 0) prevSign = sign;
-      }
-      return crossings;
+    for (let i = 0; i < 300; i++) {
+      advanceTime(8);
+      dt.update(0.008, 0.5);
     }
 
-    const crossings1 = countCrossings(1, 6000, 30);
-    const crossings4 = countCrossings(4, 6000, 140);
+    expect(dt._clutchEngaging).toBe(false);
+    expect(dt.shiftOscillation).toBe(0);
+  });
 
-    // Both should oscillate (at least 2 crossings = 1 full cycle)
-    expect(crossings1).toBeGreaterThanOrEqual(2);
-    expect(crossings4).toBeGreaterThanOrEqual(2);
-    // Frequencies should differ (physics-emergent, not identical)
-    expect(crossings1).not.toBe(crossings4);
+  it('oscillation swings positive and negative', () => {
+    dt.clutchHeld = true;
+    dt.update(0.001, 0);
+    dt.shiftUp();
+    dt.rpm = 6000;
+    dt.clutchHeld = false;
+    dt.update(0.001, 0.5);
+
+    const values = [];
+    for (let i = 0; i < 60; i++) {
+      advanceTime(4);
+      dt.update(0.004, 0.5);
+      if (dt._clutchEngaging) values.push(dt.shiftOscillation);
+    }
+
+    expect(values.some(v => v > 0.01)).toBe(true);
+    expect(values.some(v => v < -0.01)).toBe(true);
+  });
+
+  it('pressing clutch during engagement aborts it', () => {
+    dt.clutchHeld = true;
+    dt.update(0.001, 0);
+    dt.shiftUp();
+    dt.rpm = 6000;
+    dt.clutchHeld = false;
+    dt.update(0.001, 0.5);
+    expect(dt._clutchEngaging).toBe(true);
+
+    // Press clutch again
+    dt.clutchHeld = true;
+    dt.update(0.001, 0.5);
+    expect(dt._clutchEngaging).toBe(false);
   });
 });
 
@@ -422,7 +415,8 @@ describe('Drivetrain — getState', () => {
     expect(state).toHaveProperty('speed');
     expect(state).toHaveProperty('gear');
     expect(state).toHaveProperty('gearLabel');
-    expect(state).toHaveProperty('shifting');
+    expect(state).toHaveProperty('clutchHeld');
+    expect(state).toHaveProperty('clutchEngaging');
     expect(state).toHaveProperty('revLimiterActive');
     expect(state).toHaveProperty('throttle');
     expect(state).toHaveProperty('totalRatio');
@@ -443,12 +437,11 @@ describe('Drivetrain — getState', () => {
     expect(dt.getState().totalRatio).toBeCloseTo(expected, 5);
   });
 
-  it('effectiveInertia increases with lower gear ratio (higher load)', () => {
-    dt.gear = 1; // tallest ratio
+  it('effectiveInertia increases with lower gear ratio', () => {
+    dt.gear = 1;
     const inertia1 = dt.getState().effectiveInertia;
-    dt.gear = 5; // shortest ratio
+    dt.gear = 5;
     const inertia5 = dt.getState().effectiveInertia;
-    // Lower gear = higher ratio = more vehicle inertia reflected
     expect(inertia1).toBeLessThan(inertia5);
   });
 });
