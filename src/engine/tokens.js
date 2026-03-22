@@ -79,5 +79,10 @@ export const sparklineGrid   = '#333';
 export const sparklineLine   = '#4caf50';
 export const oscBar          = '#42a5f5';
 
+// ── Turbo ────────────────────────────────────────────────────
+export const barBoost          = '#ce93d8';
+export const statusTurboBg     = '#2a1b3a';
+export const statusTurboText   = '#ce93d8';
+
 // ── Braking blue (cylinder + debug) ─────────────────────────
 export const blue            = '#3a6fff';

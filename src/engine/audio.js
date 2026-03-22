@@ -52,6 +52,10 @@ const REV_FILE = '/audio/REV.wav';
 const LIMITER_FILE = '/audio/limiter.wav';
 const TRANY_FILE = '/audio/trany_power_high.wav';
 
+// Turbo sample placeholders — replace with real recordings
+const TURBO_WHINE_FILE = '/audio/turbo_whine.wav';    // looping turbo spool whine
+const TURBO_BOV_FILE = '/audio/turbo_bov.wav';         // blow-off valve hiss/pssh
+
 const ALL_FILES = [
   ...Object.values(ENGINE_SAMPLES).map(file => ({ file })),
   ...Object.values(ENGINE_EXTRA_OFF).map(file => ({ file })),
@@ -59,6 +63,8 @@ const ALL_FILES = [
   { file: REV_FILE },
   { file: LIMITER_FILE },
   { file: TRANY_FILE },
+  { file: TURBO_WHINE_FILE },
+  { file: TURBO_BOV_FILE },
 ];
 
 // RPM crossfade zone (matching markeasting)
@@ -169,6 +175,14 @@ export class EngineAudio {
     // Shift thud
     this._lastGear = -1;
 
+    // Turbo audio — sample-based whine + BOV (with synth fallback)
+    this._turboWhineSource = null;
+    this._turboWhineGain = null;
+    this._turboOsc = null;           // synth fallback if sample missing
+    this._turboFilterNode = null;
+    this._turboGain = null;
+    this._bovActive = false;
+
     this._started = false;
 
     // Per-cylinder micro-variation: subtle per-fire jitter to break mechanical perfection
@@ -208,6 +222,12 @@ export class EngineAudio {
     this._dryGain.connect(this.masterGain);
     this._wetGain.connect(this.masterGain);
     this._setExhaustMix(this._exhaustWet);
+
+    // Turbo whine: sample-based if available, synth fallback otherwise.
+    // Initialized after sample loading (see _startTurboWhine)
+    this._turboGain = this.ctx.createGain();
+    this._turboGain.gain.value = 0;
+    this._turboGain.connect(this._engineBus);
 
     let loaded = 0;
     for (const entry of ALL_FILES) {
@@ -349,6 +369,9 @@ export class EngineAudio {
       this._lastGear = gear;
     }
     if (shifting) this._lastGear = -1;
+
+    // --- 8. Turbo whine + BOV ---
+    this._updateTurboAudio(state, now);
   }
 
   setRPM(rpm, throttle = true) {
@@ -633,6 +656,119 @@ export class EngineAudio {
     gain.connect(this._engineBus);
     osc.start(now);
     osc.stop(now + 0.2);
+  }
+
+  // === Turbo audio ===
+
+  /** Start turbo whine source — sample-based or synth fallback. */
+  _startTurboWhine() {
+    if (this._turboWhineSource || this._turboOsc) return;
+
+    const buf = this.buffers.get(TURBO_WHINE_FILE);
+    if (buf) {
+      // Sample-based: loop the recording, pitch via playbackRate
+      this._turboWhineSource = this.ctx.createBufferSource();
+      this._turboWhineSource.buffer = buf;
+      this._turboWhineSource.loop = true;
+      this._turboWhineSource.playbackRate.value = 0.2;
+      this._turboWhineSource.connect(this._turboGain);
+      this._turboWhineSource.start();
+    } else {
+      // Synth fallback: sawtooth → bandpass → gain
+      this._turboOsc = this.ctx.createOscillator();
+      this._turboOsc.type = 'sawtooth';
+      this._turboOsc.frequency.value = 400;
+
+      this._turboFilterNode = this.ctx.createBiquadFilter();
+      this._turboFilterNode.type = 'bandpass';
+      this._turboFilterNode.frequency.value = 2000;
+      this._turboFilterNode.Q.value = 3;
+
+      this._turboOsc.connect(this._turboFilterNode);
+      this._turboFilterNode.connect(this._turboGain);
+      this._turboOsc.start();
+    }
+  }
+
+  _updateTurboAudio(state, now) {
+    const { turboSpool = 0, boostPsi = 0, bovActive = false } = state;
+
+    // Lazy-start whine source on first frame with spool
+    if (turboSpool > 0.01 && !this._turboWhineSource && !this._turboOsc) {
+      this._startTurboWhine();
+    }
+
+    // Turbo whine: pitch and volume scale with spool
+    if (this._turboWhineSource) {
+      // Sample mode: playbackRate 0.2 (idle) → 2.5 (full spool)
+      const rate = 0.2 + turboSpool * 2.3;
+      this._turboWhineSource.playbackRate.setTargetAtTime(rate, now, 0.06);
+    } else if (this._turboOsc) {
+      // Synth mode: 400 Hz → 5000 Hz
+      const freq = 400 + turboSpool * 4600;
+      this._turboOsc.frequency.setTargetAtTime(freq, now, 0.06);
+      this._turboFilterNode.frequency.setTargetAtTime(freq * 1.2, now, 0.06);
+    }
+
+    if (this._turboGain) {
+      // Volume: spool² curve, subtle mix
+      const vol = turboSpool * turboSpool * 0.12;
+      this._turboGain.gain.setTargetAtTime(vol, now, 0.04);
+    }
+
+    // BOV: play sample or synth burst
+    if (bovActive && !this._bovActive) {
+      this._bovActive = true;
+      this._playBOV(boostPsi, now);
+    } else if (!bovActive) {
+      this._bovActive = false;
+    }
+  }
+
+  _playBOV(boostPsi, now) {
+    if (!this.ctx) return;
+    const intensity = Math.min(1, boostPsi / 14.7);
+
+    const bovBuf = this.buffers.get(TURBO_BOV_FILE);
+    if (bovBuf) {
+      // Sample-based BOV
+      const source = this.ctx.createBufferSource();
+      source.buffer = bovBuf;
+      const gain = this.ctx.createGain();
+      gain.gain.value = 0.25 * intensity;
+      source.connect(gain);
+      gain.connect(this.masterGain); // BOV is external, bypass engine bus
+      source.start(now);
+    } else {
+      // Synth fallback: shaped noise burst
+      const duration = 0.3;
+      const sampleRate = this.ctx.sampleRate;
+      const samples = Math.floor(duration * sampleRate);
+      const buffer = this.ctx.createBuffer(1, samples, sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < samples; i++) {
+        // Decaying noise envelope
+        const env = Math.exp(-i / (sampleRate * 0.06));
+        data[i] = (Math.random() * 2 - 1) * env;
+      }
+
+      const source = this.ctx.createBufferSource();
+      source.buffer = buffer;
+
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = 1800;
+      filter.Q.value = 1.2;
+
+      const gain = this.ctx.createGain();
+      gain.gain.value = 0.2 * intensity;
+
+      source.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.masterGain);
+      source.start(now);
+      source.stop(now + duration);
+    }
   }
 
   // === Exhaust convolution reverb ===

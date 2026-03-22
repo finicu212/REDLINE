@@ -87,6 +87,13 @@
       <span class="bar-value">{fmt(data?.throttle * 100, 0)}%</span>
     </div>
 
+    <!-- Row: Boost -->
+    <span class="label">BST</span>
+    <div class="bar-container">
+      <div class="bar boost-bar" style="width: {data ? Math.min(100, ((data.boostPsi || 0) / 14.7) * 100) : 0}%"></div>
+      <span class="bar-value">{fmt(data?.boostPsi, 1)} psi</span>
+    </div>
+
     <!-- Row: Gear + indicators -->
     <span class="label">GER</span>
     <div class="indicators">
@@ -96,6 +103,8 @@
       {#if data?.revLimiterActive}<span class="indicator limiter">LIM</span>{/if}
       {#if data?.shifting}<span class="indicator shift">SHF</span>{/if}
       <span class="indicator" class:osc-active={data?.shiftOscAmplitude > 0.01}>OSC</span>
+      {#if data?.bovActive}<span class="indicator bov">BOV</span>{/if}
+      <span class="indicator" class:turbo-active={(data?.turboSpool || 0) > 0.1}>TRB {((data?.turboSpool || 0) * 100).toFixed(0)}%</span>
     </div>
 
     <!-- Row: Shift oscillation -->
@@ -203,6 +212,7 @@
   .throttle-bar { background: var(--c-bar-throttle, #4caf50); }
   .inertia-bar { background: var(--c-bar-inertia); }
   .pbr-bar { background: var(--c-bar-pbr); }
+  .boost-bar { background: var(--c-bar-boost, #ce93d8); }
 
   .bar-value {
     position: absolute;
@@ -234,6 +244,8 @@
   .limiter { background: var(--c-status-limiter-bg); color: var(--c-status-limiter); }
   .shift { background: var(--c-status-shift-bg); color: var(--c-status-shift); }
   .osc-active { background: var(--c-status-osc-bg); color: var(--c-status-osc); }
+  .bov { background: var(--c-status-turbo-bg, #2a1b3a); color: var(--c-status-turbo, #ce93d8); }
+  .turbo-active { background: var(--c-status-turbo-bg, #2a1b3a); color: var(--c-status-turbo, #ce93d8); }
 
   .osc-bar-container { background: var(--c-bg-panel); }
   .osc-bar { background: var(--c-status-osc); position: absolute; height: 100%; transition: none; }
