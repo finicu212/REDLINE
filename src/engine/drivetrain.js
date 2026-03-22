@@ -185,6 +185,7 @@ export class Drivetrain {
     this._time = 0;              // accumulated time for idle flutter
 
     // Turbo state — BeamNG-style exhaust energy → shaft speed → boost
+    this._hasTurbo = p ? !!p.turbo : true;  // default true for backward compat
     this.boostPsi = 0;               // manifold gauge pressure
     this._turboShaftRPS = 0;         // turbine shaft speed (rev/s)
     this._bovActive = false;         // blow-off valve venting
@@ -356,16 +357,17 @@ export class Drivetrain {
       this.revLimiterActive = false;
     }
 
-    // Update turbo spool
-    this._updateTurbo(dt, throttle);
+    // Update turbo spool (only if profile has turbo)
+    if (this._hasTurbo) this._updateTurbo(dt, throttle);
 
     // Drive torque — constant-power throttle model (BeamNG-style) + turbo boost
     let driveTorque = 0;
     if (throttle > 0 && !this.revLimiterActive) {
       driveTorque = this._throttleTorque(this.rpm, throttle);
-      // Boost adds torque proportional to manifold pressure
-      const boostFraction = this.boostPsi / TURBO_MAX_PSI;
-      driveTorque *= (1 + boostFraction * TURBO_BOOST_MULTIPLIER);
+      if (this._hasTurbo) {
+        const boostFraction = this.boostPsi / TURBO_MAX_PSI;
+        driveTorque *= (1 + boostFraction * TURBO_BOOST_MULTIPLIER);
+      }
     }
 
     // Resistance torque — engine braking scales with closed throttle

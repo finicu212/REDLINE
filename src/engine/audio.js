@@ -102,17 +102,19 @@ function buildFileConfig(profile) {
   };
 }
 
-function buildAllFiles(fc) {
-  return [
+function buildAllFiles(fc, hasTurbo = true) {
+  const files = [
     ...Object.values(fc.engineSamples).map(file => ({ file })),
     ...Object.values(fc.engineExtraOff).map(file => ({ file })),
     ...fc.tranyDecel,
     { file: fc.revFile },
     { file: fc.limiterFile },
     { file: fc.tranyFile },
-    { file: fc.turboWhineFile },
-    { file: fc.turboBovFile },
   ];
+  if (hasTurbo) {
+    files.push({ file: fc.turboWhineFile }, { file: fc.turboBovFile });
+  }
+  return files;
 }
 
 // --- Exhaust IR generator ---
@@ -184,7 +186,7 @@ export class EngineAudio {
 
     // Audio file config
     this._fileConfig = buildFileConfig(p);
-    this._allFiles = buildAllFiles(this._fileConfig);
+    this._allFiles = buildAllFiles(this._fileConfig, this._hasTurbo);
 
     // Exhaust params from profile
     this._pipeLength = p?.exhaust?.pipeLength ?? 1.5;
@@ -224,6 +226,7 @@ export class EngineAudio {
     this._lastGear = -1;
 
     // Turbo audio — sample-based whine + BOV (with synth fallback)
+    this._hasTurbo = profile ? !!profile.turbo : true;
     this._turboWhineSource = null;
     this._turboWhineGain = null;
     this._turboOsc = null;           // synth fallback if sample missing
@@ -275,9 +278,11 @@ export class EngineAudio {
 
     // Turbo whine: sample-based if available, synth fallback otherwise.
     // Initialized after sample loading (see _startTurboWhine)
-    this._turboGain = this.ctx.createGain();
-    this._turboGain.gain.value = 0;
-    this._turboGain.connect(this._engineBus);
+    if (this._hasTurbo) {
+      this._turboGain = this.ctx.createGain();
+      this._turboGain.gain.value = 0;
+      this._turboGain.connect(this._engineBus);
+    }
 
     let loaded = 0;
     const total = this._allFiles.length;
@@ -420,7 +425,7 @@ export class EngineAudio {
     if (shifting) this._lastGear = -1;
 
     // --- 8. Turbo whine + BOV ---
-    this._updateTurboAudio(state, now);
+    if (this._hasTurbo) this._updateTurboAudio(state, now);
   }
 
   setRPM(rpm, throttle = true) {

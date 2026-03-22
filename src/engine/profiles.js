@@ -96,6 +96,8 @@ const I4_NA = {
 
   shiftDuration: 150,
 
+  turbo: false,
+
   exhaust: { pipeLength: 1.5, diameter: 0.08, wet: 0.30 },
 
   audio: bacAudio(),
@@ -148,6 +150,8 @@ const I4_TURBO = {
 
   shiftDuration: 150,
 
+  turbo: true,
+
   exhaust: { pipeLength: 1.2, diameter: 0.07, wet: 0.25 },
 
   audio: profileAudio('i4_turbo'),
@@ -197,6 +201,8 @@ const V6_NA = {
   brakeDecel: 9.5,
 
   shiftDuration: 160,
+
+  turbo: false,
 
   exhaust: { pipeLength: 1.5, diameter: 0.09, wet: 0.35 },
 
@@ -248,6 +254,8 @@ const V8_NA = {
   brakeDecel: 8.5,
 
   shiftDuration: 180,
+
+  turbo: false,
 
   exhaust: { pipeLength: 1.8, diameter: 0.10, wet: 0.40 },
 
