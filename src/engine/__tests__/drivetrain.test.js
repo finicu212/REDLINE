@@ -271,7 +271,7 @@ describe('Drivetrain — braking', () => {
   });
 });
 
-describe('Drivetrain — shift oscillation', () => {
+describe('Drivetrain — clutch spring-damper engagement', () => {
   let dt;
   beforeEach(() => {
     mockNow = 0;
@@ -281,70 +281,68 @@ describe('Drivetrain — shift oscillation', () => {
     dt.speed = 80;
   });
 
-  it('triggers on gear change with significant RPM delta', () => {
+  it('activates on gear change with significant RPM delta', () => {
     dt.shiftUp(); // 2 -> 3
     advanceTime(200);
     dt.update(0.016, true);
-    // Oscillation should be active after shift completes
-    expect(dt._oscActive).toBe(true);
+    // Clutch should be engaging after shift completes
+    expect(dt._clutchEngaging).toBe(true);
   });
 
-  it('does not trigger from neutral', () => {
+  it('does not activate from neutral', () => {
     dt.gear = 0;
     dt.rpm = 3000;
     dt.speed = 0;
     dt.shiftUp(); // N -> 1
     advanceTime(200);
     dt.update(0.016, true);
-    // oldGear was 0, so oscillation should NOT trigger
-    expect(dt._oscActive).toBe(false);
+    // oldGear was 0, so clutch engagement should NOT trigger
+    expect(dt._clutchEngaging).toBe(false);
   });
 
-  it('amplitude scales with RPM delta', () => {
+  it('engine RPM moves toward wheel RPM during engagement', () => {
+    const preShiftRPM = dt.rpm;
+    dt.shiftUp(); // 2 -> 3 (RPM should drop for upshift)
+    advanceTime(200);
+    dt.update(0.016, 0.5);
+
+    // Engine RPM should be moving toward wheel-derived target (lower for upshift)
+    // After first frame of engagement, RPM should have started moving
+    expect(dt._clutchEngaging).toBe(true);
+    // Run a few more frames to see convergence
+    for (let i = 0; i < 30; i++) {
+      advanceTime(16);
+      dt.update(0.016, 0.5);
+    }
+    // RPM should have moved significantly from pre-shift value
+    expect(Math.abs(dt.rpm - preShiftRPM)).toBeGreaterThan(50);
+  });
+
+  it('initial RPM delta is recorded for audio', () => {
     dt.rpm = 6500;
     dt.speed = 100;
-    dt.shiftUp(); // 2 -> 3, big RPM drop
+    dt.shiftUp(); // 2 -> 3
     advanceTime(200);
-    dt.update(0.016, true);
-    const bigAmp = dt.shiftOscAmplitude;
+    dt.update(0.016, 0.5);
 
-    // Reset
-    mockNow = 0;
-    const dt2 = new Drivetrain();
-    dt2.gear = 2;
-    dt2.rpm = 2500;
-    dt2.speed = 40;
-    dt2.shiftUp();
-    advanceTime(200);
-    dt2.update(0.016, true);
-    const smallAmp = dt2.shiftOscAmplitude;
-
-    // Bigger RPM delta should produce bigger amplitude
-    expect(bigAmp).toBeGreaterThan(smallAmp);
+    // _oscRPMDelta should be non-zero and negative (upshift = RPM drops)
+    expect(dt._oscRPMDelta).toBeLessThan(-100);
+    // shiftOscAmplitude should be non-zero during engagement
+    expect(dt.shiftOscAmplitude).toBeGreaterThan(0);
   });
 
-  it('decays over time', () => {
+  it('converges and settles (clutch locks)', () => {
     dt.shiftUp();
     advanceTime(200);
-    dt.update(0.016, true);
-    const amp1 = dt.shiftOscAmplitude;
 
-    advanceTime(300);
-    dt.update(0.016, true);
-    const amp2 = dt.shiftOscAmplitude;
+    // Run many frames — spring-damper should converge
+    for (let i = 0; i < 200; i++) {
+      advanceTime(16);
+      dt.update(0.016, 0.5);
+    }
 
-    expect(amp2).toBeLessThan(amp1);
-  });
-
-  it('stops after OSCILLATION_DURATION', () => {
-    dt.shiftUp();
-    advanceTime(200);
-    dt.update(0.016, true);
-    expect(dt._oscActive).toBe(true);
-
-    advanceTime(1200); // > 1.0s oscillation duration
-    dt.update(0.016, true);
-    expect(dt._oscActive).toBe(false);
+    // Should have settled
+    expect(dt._clutchEngaging).toBe(false);
     expect(dt.shiftOscillation).toBe(0);
     expect(dt.shiftOscAmplitude).toBe(0);
   });
@@ -354,16 +352,53 @@ describe('Drivetrain — shift oscillation', () => {
     advanceTime(200);
 
     const values = [];
-    for (let i = 0; i < 20; i++) {
-      advanceTime(15);
-      dt.update(0.016, true);
-      values.push(dt.shiftOscillation);
+    for (let i = 0; i < 40; i++) {
+      advanceTime(8);
+      dt.update(0.008, 0.5);
+      if (dt._clutchEngaging) {
+        values.push(dt.shiftOscillation);
+      }
     }
 
-    const hasPositive = values.some(v => v > 0.001);
-    const hasNegative = values.some(v => v < -0.001);
+    const hasPositive = values.some(v => v > 0.01);
+    const hasNegative = values.some(v => v < -0.01);
     expect(hasPositive).toBe(true);
     expect(hasNegative).toBe(true);
+  });
+
+  it('frequency emerges from spring-damper physics (not hardcoded)', () => {
+    // The oscillation frequency should depend on gear because the
+    // reflected vehicle inertia changes. Just verify that oscillation
+    // actually occurs with multiple zero-crossings in different gears.
+    function countCrossings(startGear, rpm, speed) {
+      mockNow = 0;
+      const d = new Drivetrain();
+      d.gear = startGear;
+      d.rpm = rpm;
+      d.speed = speed;
+      d.shiftUp();
+      advanceTime(200);
+
+      let crossings = 0;
+      let prevSign = 0;
+      for (let i = 0; i < 400; i++) {
+        advanceTime(2);
+        d.update(0.002, 0.5);
+        const sign = Math.sign(d.shiftOscillation);
+        if (sign !== 0 && prevSign !== 0 && sign !== prevSign) crossings++;
+        if (sign !== 0) prevSign = sign;
+      }
+      return crossings;
+    }
+
+    const crossings1 = countCrossings(1, 6000, 30);
+    const crossings4 = countCrossings(4, 6000, 140);
+
+    // Both should oscillate (at least 2 crossings = 1 full cycle)
+    expect(crossings1).toBeGreaterThanOrEqual(2);
+    expect(crossings4).toBeGreaterThanOrEqual(2);
+    // Frequencies should differ (physics-emergent, not identical)
+    expect(crossings1).not.toBe(crossings4);
   });
 });
 
@@ -374,29 +409,8 @@ describe('Drivetrain — getState', () => {
     dt = new Drivetrain();
   });
 
-  it('returns display RPM with oscillation offset', () => {
-    dt.gear = 2;
-    dt.rpm = 5000;
-    dt.speed = 80;
-    dt.shiftUp();
-    advanceTime(200);
-    dt.update(0.016, true);
-
-    // Physics RPM and display RPM should differ during oscillation
-    const state = dt.getState();
-    const physicsRPM = dt.rpm;
-    // Display RPM includes oscillation offset
-    if (dt._oscActive && dt.shiftOscillation !== 0) {
-      expect(state.rpm).not.toBe(physicsRPM);
-    }
-  });
-
-  it('display RPM is clamped to [IDLE, MAX]', () => {
-    dt.rpm = IDLE_RPM + 50;
-    dt._oscActive = true;
-    dt._oscRPMDelta = -5000;
-    dt.shiftOscillation = -1; // maximum negative swing
-
+  it('RPM is clamped to [IDLE, MAX]', () => {
+    dt.rpm = IDLE_RPM - 100;
     const state = dt.getState();
     expect(state.rpm).toBeGreaterThanOrEqual(IDLE_RPM);
     expect(state.rpm).toBeLessThanOrEqual(MAX_RPM);

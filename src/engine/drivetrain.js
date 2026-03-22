@@ -1,15 +1,19 @@
 /**
  * Drivetrain physics — gear ratios, inertia model, rev limiter, shift state machine,
- * and post-shift oscillation modeling.
+ * and spring-damper clutch engagement.
  *
  * Based on Honda S2000 AP1 gearbox. Physics model:
  *   angular_accel = (drive_torque - resistance_torque) / effective_inertia
  *   effective_inertia = engine_inertia + vehicle_inertia / (total_ratio^2)
  *
- * Shift oscillation: when gears engage, engine RPM and wheel-driven RPM equalize
- * through the drivetrain's spring-mass compliance. This produces a damped sine
- * oscillation at 6-12 Hz, decaying over 200-400ms. Amplitude scales with the
- * RPM mismatch at the moment of engagement.
+ * Clutch engagement: when gears engage after a shift, engine and wheel inertias
+ * are coupled through a torsional spring-damper. The RPM mismatch produces real
+ * oscillation whose frequency and damping emerge from the physics — lower gears
+ * oscillate slower (more reflected inertia), higher gears faster.
+ *
+ *   clutch_torque = k * angle_delta + c * omega_delta
+ *   f_natural = (1/2π) * sqrt(k / J_reduced)
+ *   ζ = c / (2 * sqrt(k * J_reduced))
  */
 
 import { IDLE_RPM, REDLINE_RPM, REV_CUT_RPM, MAX_RPM } from './constants.js';
@@ -28,11 +32,11 @@ const BRAKE_DECEL = 9.0;          // m/s² — vehicle deceleration under brakin
 
 const SHIFT_DURATION = 150;      // ms — clutch disengaged during shift
 
-// Shift oscillation parameters
-const OSCILLATION_FREQ = 6;             // Hz — drivetrain natural frequency (lower = more visible on tacho)
-const OSCILLATION_DECAY_TAU = 0.35;     // seconds — exponential decay time constant
-const OSCILLATION_DURATION = 1.0;       // seconds — total oscillation window
-const OSCILLATION_RPM_SCALE = 0.45;     // fraction of RPM delta that becomes oscillation amplitude
+// Clutch spring-damper parameters
+// Tuned so that in mid gears (~gear 2-3) natural frequency ≈ 6 Hz, damping ratio ζ ≈ 0.35
+const CLUTCH_STIFFNESS = 190;    // Nm/rad — torsional spring constant
+const CLUTCH_DAMPING = 3.5;      // Nm·s/rad — torsional viscous damping
+const CLUTCH_SETTLE_THRESHOLD = 5; // RPM — snap together when deviation < this
 
 // Simplified torque curve (RPM → Nm at wide-open throttle)
 const TORQUE_CURVE = [
@@ -113,11 +117,12 @@ export class Drivetrain {
     this._preShiftRPM = 0;
     this._preShiftThrottle = false;
 
-    // Post-shift oscillation state
-    this._oscActive = false;
-    this._oscStartTime = 0;
-    this._oscRPMDelta = 0;       // signed: negative = upshift (RPM dropped), positive = downshift
-    this._oscDirection = 0;       // +1 upshift, -1 downshift
+    // Clutch spring-damper state
+    this._clutchEngaging = false;
+    this._wheelOmega = 0;         // rad/s — wheel angular velocity (reflected to engine side)
+    this._clutchAngleDelta = 0;   // rad — integrated angular displacement between engine & wheel
+    this._clutchInitialDelta = 0; // RPM — initial mismatch at engagement (for audio normalization)
+    this._oscRPMDelta = 0;        // signed RPM delta at engagement (consumed by audio for shift thud)
     this.shiftOscillation = 0;    // current oscillation value [-1, 1] — consumed by audio
     this.shiftOscAmplitude = 0;   // current decayed amplitude [0, 1] — consumed by audio
     this._lastThrottle = 0;       // last throttle input for getState torque reporting
@@ -136,16 +141,12 @@ export class Drivetrain {
     return this.gear === 0 ? 'N' : String(this.gear);
   }
 
-  /** Snapshot of all drivetrain state for audio + debug.
-   *  RPM includes oscillation offset for tacho/audio; physics uses raw this.rpm. */
+  /** Snapshot of all drivetrain state for audio + debug. */
   getState() {
     const inGear = !this.isNeutral && this.gear > 0;
     const totalRatio = inGear ? GEAR_RATIOS[this.gear] * FINAL_DRIVE : 0;
-    // Display RPM = base RPM + oscillation wobble (clamped to valid range)
-    const oscOffset = this._oscActive ? this.shiftOscillation * Math.abs(this._oscRPMDelta) : 0;
-    const displayRPM = Math.max(IDLE_RPM, Math.min(MAX_RPM, this.rpm + oscOffset));
     return {
-      rpm: displayRPM,
+      rpm: Math.max(IDLE_RPM, Math.min(MAX_RPM, this.rpm)),
       speed: this.speed,
       gear: this.gear,
       gearLabel: this.gearLabel,
@@ -209,19 +210,8 @@ export class Drivetrain {
       }
     }
 
-    // Update post-shift oscillation
-    this._updateOscillation();
-
     const inGear = !this.isNeutral && this.gear > 0;
     const totalRatio = inGear ? GEAR_RATIOS[this.gear] * FINAL_DRIVE : 0;
-
-    // Effective inertia
-    let J;
-    if (inGear) {
-      J = ENGINE_INERTIA + VEHICLE_INERTIA / (totalRatio * totalRatio);
-    } else {
-      J = ENGINE_INERTIA;
-    }
 
     // Rev limiter (fuel cut with hysteresis)
     if (this.rpm >= REDLINE_RPM) {
@@ -239,9 +229,9 @@ export class Drivetrain {
     // Resistance torque — engine braking scales with closed throttle
     let resistanceTorque = FRICTION_TORQUE;
     const closedThrottle = 1 - throttle;
-    if (inGear) {
+    if (inGear && !this._clutchEngaging) {
       resistanceTorque += ENGINE_BRAKING_FACTOR * totalRatio * closedThrottle;
-    } else {
+    } else if (!inGear) {
       resistanceTorque += ENGINE_BRAKING_FACTOR * 0.3 * closedThrottle;
     }
 
@@ -249,36 +239,93 @@ export class Drivetrain {
       resistanceTorque += ENGINE_BRAKING_FACTOR * 2;
     }
 
-    // Angular acceleration → RPM change
-    const netTorque = driveTorque - resistanceTorque;
-    const alpha = netTorque / J;
-    this.rpm += alpha * dt * RADS_TO_RPM;
+    // --- Clutch spring-damper engagement ---
+    if (this._clutchEngaging) {
+      const engineOmega = this.rpm * RPM_TO_RADS;
+      const omegaDelta = this._wheelOmega - engineOmega;
+
+      // Integrate angular displacement
+      this._clutchAngleDelta += omegaDelta * dt;
+
+      // Spring-damper torque
+      const clutchTorque = CLUTCH_STIFFNESS * this._clutchAngleDelta + CLUTCH_DAMPING * omegaDelta;
+
+      // Apply to engine side (on top of drive/resistance torques)
+      const engineAlpha = (driveTorque - resistanceTorque + clutchTorque) / ENGINE_INERTIA;
+      this.rpm += engineAlpha * dt * RADS_TO_RPM;
+
+      // Apply reaction to wheel side
+      const wheelJ = VEHICLE_INERTIA / (totalRatio * totalRatio);
+      this._wheelOmega += (-clutchTorque / wheelJ) * dt;
+
+      // Derive speed from wheel omega
+      this.speed = Math.max(0, (this._wheelOmega * RADS_TO_RPM / totalRatio) * TIRE_CIRCUMFERENCE / 60 * 3.6);
+
+      // Update audio oscillation from actual physics state
+      const rpmDeviation = this.rpm - (this._wheelOmega * RADS_TO_RPM);
+      if (Math.abs(this._clutchInitialDelta) > 1) {
+        this.shiftOscillation = Math.max(-1, Math.min(1, rpmDeviation / this._clutchInitialDelta));
+        this.shiftOscAmplitude = Math.min(1, Math.abs(rpmDeviation / this._clutchInitialDelta));
+      }
+
+      // Check convergence
+      const rpmDiff = Math.abs(this.rpm - this._wheelOmega * RADS_TO_RPM);
+      if (rpmDiff < CLUTCH_SETTLE_THRESHOLD && Math.abs(omegaDelta) < CLUTCH_SETTLE_THRESHOLD * RPM_TO_RADS) {
+        this._clutchEngaging = false;
+        // Snap to shared velocity (conserve momentum)
+        const Je = ENGINE_INERTIA;
+        const Jw = VEHICLE_INERTIA / (totalRatio * totalRatio);
+        const sharedOmega = (Je * this.rpm * RPM_TO_RADS + Jw * this._wheelOmega) / (Je + Jw);
+        this.rpm = sharedOmega * RADS_TO_RPM;
+        this.shiftOscillation = 0;
+        this.shiftOscAmplitude = 0;
+      }
+    } else {
+      // Normal rigid coupling — engine and wheels locked together
+      let J;
+      if (inGear) {
+        J = ENGINE_INERTIA + VEHICLE_INERTIA / (totalRatio * totalRatio);
+      } else {
+        J = ENGINE_INERTIA;
+      }
+
+      const netTorque = driveTorque - resistanceTorque;
+      const alpha = netTorque / J;
+      this.rpm += alpha * dt * RADS_TO_RPM;
+
+      // Compute vehicle speed from RPM
+      if (inGear) {
+        const wheelRPM = this.rpm / totalRatio;
+        this.speed = (wheelRPM * TIRE_CIRCUMFERENCE / 60) * 3.6;
+      } else if (!this._shifting) {
+        this.speed = Math.max(0, this.speed - this.speed * 0.3 * dt);
+      }
+
+      // Decay audio oscillation when not engaging
+      if (!this._clutchEngaging && this.shiftOscAmplitude > 0) {
+        this.shiftOscillation = 0;
+        this.shiftOscAmplitude = 0;
+      }
+    }
 
     // Clamp RPM
     if (this.rpm < IDLE_RPM) this.rpm = IDLE_RPM;
     if (this.rpm > MAX_RPM) this.rpm = MAX_RPM;
 
-    // Compute vehicle speed from base RPM (no oscillation — prevents feedback)
-    if (inGear) {
-      const wheelRPM = this.rpm / totalRatio;
-      this.speed = (wheelRPM * TIRE_CIRCUMFERENCE / 60) * 3.6;
-    } else if (!this._shifting) {
-      this.speed = Math.max(0, this.speed - this.speed * 0.3 * dt);
-    }
-
     // Braking: decelerates the vehicle (wheels), not the engine directly.
-    // When in gear, reduced speed will pull RPM down next frame via the
-    // speed→RPM coupling. When in neutral, just slows the car.
     if (braking && this.speed > 0) {
       const speedMS = this.speed / 3.6;
       const newSpeedMS = Math.max(0, speedMS - BRAKE_DECEL * dt);
       this.speed = newSpeedMS * 3.6;
 
       // In gear: sync RPM to the braked wheel speed
-      if (inGear) {
+      if (inGear && !this._clutchEngaging) {
         const brakedWheelRPS = newSpeedMS / TIRE_CIRCUMFERENCE;
         const brakedRPM = brakedWheelRPS * 60 * totalRatio;
         this.rpm = Math.max(IDLE_RPM, brakedRPM);
+      } else if (this._clutchEngaging) {
+        // Braking affects wheel side during clutch engagement
+        this._wheelOmega = Math.max(0, (newSpeedMS / TIRE_CIRCUMFERENCE) * 2 * Math.PI * totalRatio);
       }
     }
   }
@@ -289,6 +336,12 @@ export class Drivetrain {
     this._shiftStart = performance.now();
     this._shiftTargetGear = targetGear;
     this._preShiftRPM = this.rpm;
+    // If clutch was still engaging from a previous shift, snap it closed
+    if (this._clutchEngaging) {
+      this._clutchEngaging = false;
+      this.shiftOscillation = 0;
+      this.shiftOscAmplitude = 0;
+    }
   }
 
   /** @private */
@@ -298,55 +351,31 @@ export class Drivetrain {
     this._shifting = false;
     this.gear = newGear;
 
-    let targetRPM = this.rpm;
+    if (newGear > 0 && this.speed > 0 && oldGear > 0) {
+      const newTotalRatio = GEAR_RATIOS[newGear] * FINAL_DRIVE;
+      const wheelRPS = (this.speed / 3.6) / TIRE_CIRCUMFERENCE;
+      const targetRPM = Math.max(IDLE_RPM, Math.min(MAX_RPM, wheelRPS * 60 * newTotalRatio));
+
+      const rpmDelta = targetRPM - this.rpm;
+
+      // Only engage spring-damper if there's a meaningful RPM mismatch
+      if (Math.abs(rpmDelta) > 100) {
+        this._clutchEngaging = true;
+        this._wheelOmega = targetRPM * RPM_TO_RADS;
+        this._clutchAngleDelta = 0;
+        this._clutchInitialDelta = rpmDelta;
+        this._oscRPMDelta = rpmDelta;
+        // Engine RPM stays where it is — the spring-damper will pull it toward wheel speed
+        return;
+      }
+    }
+
+    // Small delta or shifting to/from neutral — just snap RPM
     if (newGear > 0 && this.speed > 0) {
       const newTotalRatio = GEAR_RATIOS[newGear] * FINAL_DRIVE;
       const wheelRPS = (this.speed / 3.6) / TIRE_CIRCUMFERENCE;
-      targetRPM = Math.max(IDLE_RPM, Math.min(MAX_RPM, wheelRPS * 60 * newTotalRatio));
+      this.rpm = Math.max(IDLE_RPM, Math.min(MAX_RPM, wheelRPS * 60 * newTotalRatio));
     }
-
-    // Compute RPM delta for oscillation: how much RPM jumped
-    const rpmDelta = targetRPM - this.rpm;
-    this.rpm = targetRPM;
-
-    // Trigger post-shift oscillation if there was a meaningful RPM change
-    if (Math.abs(rpmDelta) > 100 && oldGear > 0) {
-      this._oscActive = true;
-      this._oscStartTime = performance.now();
-      this._oscRPMDelta = rpmDelta;
-      this._oscDirection = rpmDelta < 0 ? 1 : -1; // upshift = RPM drops = positive dir
-    }
-  }
-
-  /** @private Update the damped oscillation state. */
-  _updateOscillation() {
-    if (!this._oscActive) {
-      this.shiftOscillation = 0;
-      this.shiftOscAmplitude = 0;
-      return;
-    }
-
-    const elapsed = (performance.now() - this._oscStartTime) / 1000; // seconds
-
-    if (elapsed > OSCILLATION_DURATION) {
-      this._oscActive = false;
-      this.shiftOscillation = 0;
-      this.shiftOscAmplitude = 0;
-      return;
-    }
-
-    // Normalized amplitude [0, 1] based on RPM delta magnitude
-    // Bigger RPM jumps = bigger oscillation
-    const rpmMagnitude = Math.min(1, Math.abs(this._oscRPMDelta) / 3000);
-    const baseAmplitude = rpmMagnitude * OSCILLATION_RPM_SCALE;
-
-    // Exponential decay
-    const decay = Math.exp(-elapsed / OSCILLATION_DECAY_TAU);
-    this.shiftOscAmplitude = baseAmplitude * decay;
-
-    // Damped sine wave
-    const phase = 2 * Math.PI * OSCILLATION_FREQ * elapsed;
-    this.shiftOscillation = Math.sin(phase) * this.shiftOscAmplitude;
   }
 }
 
