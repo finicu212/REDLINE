@@ -25,12 +25,12 @@
   let debugState = $state(null);
 
   // --- Touch state ---
-  // Touch anywhere on the main area = throttle (Y maps to 0–1, lower = more)
-  // Visible on-screen buttons handle shift up/down and brake
+  // Touch anywhere = throttle. Drag UP from touch origin = more throttle (same as mouse).
   let touchThrottle = $state(0);
   let touchBraking = $state(false);
-  /** @type {Set<number>} touch identifiers currently providing throttle */
-  const throttleTouches = new Set();
+  const TOUCH_THROTTLE_PX = 120;  // px of upward drag for 100% (matches mouse THROTTLE_DRAG_PX)
+  /** @type {Map<number, number>} touch id → startY */
+  const throttleTouches = new Map();
 
   // --- Gamepad state ---
   let gamepadThrottle = $state(0);
@@ -94,25 +94,18 @@
   }
 
   // --- Touch handlers ---
-  // Touches on the main sim area = throttle (Y position: top=0%, bottom=100%)
-  // On-screen buttons handle shift and brake via their own touch events
-
-  function touchYToThrottle(clientY) {
-    const h = window.innerHeight;
-    return Math.max(0, Math.min(1, clientY / h));
-  }
+  // Drag UP from touch origin = throttle 0→1 over TOUCH_THROTTLE_PX (mirrors mouse drag)
 
   function onTouchStart(e) {
-    // Ignore touches that land on a touch-btn (they handle themselves)
     if (e.target.closest('.touch-btn')) return;
     e.preventDefault();
     showHint = false;
     isTouchDevice = true;
 
     for (const touch of e.changedTouches) {
-      throttleTouches.add(touch.identifier);
-      touchThrottle = touchYToThrottle(touch.clientY);
+      throttleTouches.set(touch.identifier, touch.clientY);
     }
+    // Touch down alone = 0% throttle (must drag up)
   }
 
   function onTouchMove(e) {
@@ -120,8 +113,10 @@
     e.preventDefault();
 
     for (const touch of e.changedTouches) {
-      if (throttleTouches.has(touch.identifier)) {
-        touchThrottle = touchYToThrottle(touch.clientY);
+      const originY = throttleTouches.get(touch.identifier);
+      if (originY !== undefined) {
+        const dragUp = originY - touch.clientY;
+        touchThrottle = Math.max(0, Math.min(1, dragUp / TOUCH_THROTTLE_PX));
       }
     }
   }
