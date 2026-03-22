@@ -109,22 +109,16 @@ describe('Drivetrain — clutch and shifting', () => {
     expect(dt.isDecoupled).toBe(true);
   });
 
-  it('over-rev protection blocks dangerous downshifts', () => {
+  it('allows downshift even if it would over-rev', () => {
     dt.clutchHeld = true;
     dt.update(0.001, 0);
     for (let i = 0; i < 5; i++) dt.shiftUp();
     expect(dt.gear).toBe(5);
     dt.speed = 200;
     dt.rpm = 6000;
-
-    const newRatio = GEAR_RATIOS[4] * FINAL_DRIVE;
-    const wheelRPS = (200 / 3.6) / 1.88;
-    const projectedRPM = wheelRPS * 60 * newRatio;
-    if (projectedRPM > MAX_RPM) {
-      expect(dt.shiftDown()).toBe(false);
-    } else {
-      expect(dt.shiftDown()).toBe(true);
-    }
+    // Downshift allowed — engine can over-rev
+    expect(dt.shiftDown()).toBe(true);
+    expect(dt.gear).toBe(4);
   });
 
   it('gear label shows number when clutch not held', () => {

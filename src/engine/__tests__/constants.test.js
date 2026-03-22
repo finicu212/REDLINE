@@ -18,8 +18,8 @@ describe('RPM constants', () => {
     expect(REV_CUT_RPM).toBeGreaterThan(IDLE_RPM);
   });
 
-  it('MAX_RPM equals REDLINE_RPM', () => {
-    expect(MAX_RPM).toBe(REDLINE_RPM);
+  it('MAX_RPM exceeds REDLINE_RPM (allows over-rev)', () => {
+    expect(MAX_RPM).toBeGreaterThan(REDLINE_RPM);
   });
 
   it('TACHO_MAX_RPM exceeds REDLINE_RPM for visual headroom', () => {

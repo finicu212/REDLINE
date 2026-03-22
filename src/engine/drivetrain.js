@@ -165,23 +165,12 @@ export class Drivetrain {
 
   /**
    * Shift down. Requires clutch to be held (or already in neutral won't go below 0).
-   * Over-rev protection still applies.
+   * No over-rev protection — engine allows over-rev past redline.
    */
   shiftDown() {
     if (!this.clutchHeld && this.gear > 0) return false;
     if (this.gear <= 0) return false;
-
-    const newGear = this.gear - 1;
-
-    // Over-rev protection for downshifts into a gear
-    if (newGear > 0 && this.speed > 0) {
-      const newTotalRatio = GEAR_RATIOS[newGear] * FINAL_DRIVE;
-      const wheelRPS = (this.speed / 3.6) / TIRE_CIRCUMFERENCE;
-      const projectedRPM = wheelRPS * 60 * newTotalRatio;
-      if (projectedRPM > MAX_RPM) return false;
-    }
-
-    this.gear = newGear;
+    this.gear -= 1;
     return true;
   }
 
