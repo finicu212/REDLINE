@@ -121,6 +121,14 @@ export class EngineAudio {
 
     this._started = false;
 
+    // Per-cylinder micro-variation: subtle per-fire jitter to break mechanical perfection
+    // Cycles through per-cylinder offsets based on firing count
+    this._fireCount = 0;
+    this._cylCount = 4;  // updated from state
+    // Pre-computed per-cylinder detune offsets (±3 cents) and gain offsets (±3%)
+    this._cylDetuneOffsets = [1.2, -2.1, 0.8, -1.5, 2.4, -0.6];
+    this._cylGainOffsets = [0.02, -0.015, 0.025, -0.01, 0.018, -0.02];
+
     // Debug
     this.debugBandGains = {};
     this.debugDetune = 0;
@@ -170,23 +178,31 @@ export class EngineAudio {
     const nRPM = normalizeRPM(clamped);
     const now = this.ctx.currentTime;
 
-    // --- 1. Pitch via detune + shift oscillation wobble ---
+    // --- 1. Pitch via detune + shift oscillation wobble + per-cylinder jitter ---
     const baseDetune = rpmToDetune(clamped);
-    // Shift oscillation adds ±cents wobble (scaled by RPM delta magnitude)
-    // Max wobble: ~80 cents at full amplitude ≈ ±400 RPM perceived pitch swing
-    // Small extra detune kick on top of RPM-driven pitch for audio richness
     const detuneWobble = shiftOscillation * 45;
+
+    // Per-cylinder micro-variation: advance fire counter based on RPM
+    // At 6000 RPM with 4 cylinders: 200 fires/sec. We approximate by advancing
+    // the counter each frame proportional to RPM, cycling through cylinder offsets.
+    const firesPerSec = (clamped / 60) * (this._cylCount / 2); // 4-stroke: fires = RPM/60 * cyl/2
+    this._fireCount += firesPerSec * (1 / 60); // assume ~60fps
+    const cylIdx = Math.floor(this._fireCount) % this._cylDetuneOffsets.length;
+    const microDetune = this._cylDetuneOffsets[cylIdx];
+    const microGain = this._cylGainOffsets[cylIdx];
+
     const detune = baseDetune + detuneWobble;
-    this.debugDetune = detune;
+    const detuneWithMicro = detune + microDetune;
+    this.debugDetune = detune;  // debug shows clean value without micro-jitter
     this.debugShiftOsc = shiftOscAmplitude;
 
     for (const key of Object.keys(this._engineSources)) {
       const src = this._engineSources[key];
-      if (src) src.detune.setTargetAtTime(detune, now, 0.015);
+      if (src) src.detune.setTargetAtTime(detuneWithMicro, now, 0.015);
     }
     for (const key of Object.keys(this._extraOffSources)) {
       const src = this._extraOffSources[key];
-      if (src) src.detune.setTargetAtTime(detune, now, 0.015);
+      if (src) src.detune.setTargetAtTime(detuneWithMicro, now, 0.015);
     }
 
     // Gain modulation factor: oscillation modulates engine volume ±15%
@@ -217,6 +233,7 @@ export class EngineAudio {
     const revMix = Math.sin(revBlend * Math.PI / 2);
 
     // Apply gains: on-samples get onGain × onVolume, off-samples get offGain
+    // Debug values use clean gainMod; audio nodes get per-cylinder micro-variation
     const engineGainValues = {
       on_low:   onGain * onVolume * lowGain * pitchedMix * gainMod,
       on_high:  onGain * onVolume * highGain * pitchedMix * gainMod,
@@ -228,7 +245,7 @@ export class EngineAudio {
 
     for (const key of Object.keys(engineGainValues)) {
       const g = this._engineGains[key];
-      if (g) g.gain.setTargetAtTime(engineGainValues[key], now, 0.05);
+      if (g) g.gain.setTargetAtTime(engineGainValues[key] * (1.0 + microGain), now, 0.05);
     }
 
     // Extra off-throttle layers (mid, veryhigh) — blend in off-throttle mid range

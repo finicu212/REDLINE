@@ -23,6 +23,20 @@
   const CYL_H = 60;
   const V_GAP = 80;
 
+  // Per-cylinder variation: each cylinder gets a stable random offset
+  // for timing jitter (±8% of interval) and brightness variation (0.7–1.0)
+  const JITTER_RANGE = 0.08;       // ±8% of firing interval
+  const BRIGHTNESS_MIN = 0.75;
+  const BRIGHTNESS_MAX = 1.0;
+
+  // Seeded per-cylinder offsets (stable across frames, recomputed on cylinder count change)
+  let cylJitter = $derived(Array.from({ length: cylinders }, (_, i) =>
+    (Math.sin(i * 7.31 + 2.17) * 0.5 + 0.5) * 2 * JITTER_RANGE - JITTER_RANGE
+  ));
+  let cylBrightness = $derived(Array.from({ length: cylinders }, (_, i) =>
+    BRIGHTNESS_MIN + (Math.sin(i * 13.37 + 5.91) * 0.5 + 0.5) * (BRIGHTNESS_MAX - BRIGHTNESS_MIN)
+  ));
+
   // Colors — from tokens
   const COL_IDLE = cylIdle;
   const COL_POWER = cylPower;
@@ -48,10 +62,10 @@
     return p;
   }
 
-  function getFiringColor(firing) {
-    if (!firing) return { fill: COL_IDLE, stroke: borderMid, glow: '' };
-    if (throttle > 0.1) return { fill: COL_POWER, stroke: COL_POWER_STROKE, glow: `filter: drop-shadow(0 0 12px ${COL_POWER_GLOW})` };
-    return { fill: COL_BRAKE, stroke: COL_BRAKE_STROKE, glow: `filter: drop-shadow(0 0 10px ${COL_BRAKE_GLOW})` };
+  function getFiringColor(firing, brightness = 1) {
+    if (!firing) return { fill: COL_IDLE, stroke: borderMid, glow: '', opacity: 1 };
+    if (throttle > 0.1) return { fill: COL_POWER, stroke: COL_POWER_STROKE, glow: `filter: drop-shadow(0 0 ${12 * brightness}px ${COL_POWER_GLOW})`, opacity: brightness };
+    return { fill: COL_BRAKE, stroke: COL_BRAKE_STROKE, glow: `filter: drop-shadow(0 0 ${10 * brightness}px ${COL_BRAKE_GLOW})`, opacity: brightness };
   }
 
   onMount(() => {
@@ -64,8 +78,12 @@
       const interval = 60000 / rpm / (cylinders / 2);
       const flashDuration = Math.max(30, interval * 0.3);
 
-      if (now - lastFireTime >= interval) {
-        const cylIdx = order[firingIndex % order.length];
+      // Per-cylinder timing jitter: next cylinder's offset shifts the fire threshold
+      const nextCyl = order[firingIndex % order.length];
+      const jitteredInterval = interval * (1 + (cylJitter[nextCyl] || 0));
+
+      if (now - lastFireTime >= jitteredInterval) {
+        const cylIdx = nextCyl;
         firingStates[cylIdx] = true;
         setTimeout(() => {
           firingStates[cylIdx] = false;
@@ -84,8 +102,8 @@
 
 <svg class="cylinder-svg" style="max-width: {svgWidth}px" viewBox="0 0 {svgWidth} {svgHeight}">
   {#each positions as pos, i}
-    {@const col = getFiringColor(firingStates[i])}
-    <g transform="translate({pos.x}, {pos.y}) rotate({pos.angle})">
+    {@const col = getFiringColor(firingStates[i], cylBrightness[i] || 1)}
+    <g transform="translate({pos.x}, {pos.y}) rotate({pos.angle})" opacity={col.opacity}>
       <rect
         x="-22"
         y="-30"
