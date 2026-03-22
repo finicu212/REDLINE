@@ -44,9 +44,29 @@ function createMockOscillator() {
   };
 }
 
+function createMockConvolver() {
+  return {
+    buffer: null,
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+  };
+}
+
+function createMockAudioBuffer(channels, length, sampleRate) {
+  const data = new Float32Array(length);
+  return {
+    numberOfChannels: channels,
+    length,
+    sampleRate,
+    duration: length / sampleRate,
+    getChannelData: vi.fn(() => data),
+  };
+}
+
 // Must use function (not arrow) so `new AudioContext()` works
 function MockAudioContext() {
   this.currentTime = 0;
+  this.sampleRate = 44100;
   this.state = 'running';
   this.destination = {};
   this.resume = vi.fn();
@@ -54,6 +74,8 @@ function MockAudioContext() {
   this.createGain = vi.fn(() => createMockGainNode());
   this.createBufferSource = vi.fn(() => createMockSource());
   this.createOscillator = vi.fn(() => createMockOscillator());
+  this.createConvolver = vi.fn(() => createMockConvolver());
+  this.createBuffer = vi.fn((channels, length, sampleRate) => createMockAudioBuffer(channels, length, sampleRate));
   this.decodeAudioData = vi.fn(async () => ({ duration: 1.0, length: 44100 }));
 }
 
@@ -434,5 +456,132 @@ describe('EngineAudio — edge cases', () => {
       rpm: 3000, throttle: true, gear: 1, speed: 20,
       shifting: false, revLimiterActive: false,
     })).not.toThrow();
+  });
+});
+
+describe('EngineAudio — exhaust convolution reverb', () => {
+  let ea;
+  beforeEach(async () => {
+    ea = new EngineAudio();
+    vi.stubGlobal('AudioContext', MockAudioContext);
+    vi.stubGlobal('fetch', mockFetch());
+    await ea.init();
+  });
+
+  it('creates convolver node during init', () => {
+    expect(ea._convolver).toBeTruthy();
+    expect(ea.ctx.createConvolver).toHaveBeenCalled();
+  });
+
+  it('creates engine bus with dry/wet routing', () => {
+    expect(ea._engineBus).toBeTruthy();
+    expect(ea._dryGain).toBeTruthy();
+    expect(ea._wetGain).toBeTruthy();
+  });
+
+  it('generates IR buffer for convolver', () => {
+    expect(ea.ctx.createBuffer).toHaveBeenCalled();
+    expect(ea._convolver.buffer).toBeTruthy();
+  });
+
+  it('setExhaustParams updates without crashing', () => {
+    ea.start();
+    expect(() => ea.setExhaustParams({ pipeLength: 2.0, diameter: 0.1, wetMix: 0.5 })).not.toThrow();
+  });
+
+  it('setExhaustParams regenerates IR on pipe change', () => {
+    ea.start();
+    const callsBefore = ea.ctx.createBuffer.mock.calls.length;
+    ea.setExhaustParams({ pipeLength: 2.5 });
+    expect(ea.ctx.createBuffer.mock.calls.length).toBeGreaterThan(callsBefore);
+  });
+
+  it('setExhaustParams is a no-op before init', () => {
+    const fresh = new EngineAudio();
+    expect(() => fresh.setExhaustParams({ pipeLength: 2.0 })).not.toThrow();
+  });
+});
+
+describe('EngineAudio — per-cylinder micro-variation', () => {
+  let ea;
+  beforeEach(async () => {
+    ea = new EngineAudio();
+    vi.stubGlobal('AudioContext', MockAudioContext);
+    vi.stubGlobal('fetch', mockFetch());
+    await ea.init();
+    ea.start();
+  });
+
+  it('fire counter advances with RPM', () => {
+    ea.setEngineState({
+      rpm: 6000, throttle: true, gear: 3, speed: 100,
+      shifting: false, revLimiterActive: false,
+    });
+    const count1 = ea._fireCount;
+    ea.setEngineState({
+      rpm: 6000, throttle: true, gear: 3, speed: 100,
+      shifting: false, revLimiterActive: false,
+    });
+    expect(ea._fireCount).toBeGreaterThan(count1);
+  });
+
+  it('fire counter advances faster at higher RPM', () => {
+    // Use the shared ea instance, reset fire count between measurements
+    ea._fireCount = 0;
+    ea.setEngineState({
+      rpm: 2000, throttle: true, gear: 1, speed: 20,
+      shifting: false, revLimiterActive: false,
+    });
+    const lowIncrement = ea._fireCount;
+
+    ea._fireCount = 0;
+    ea.setEngineState({
+      rpm: 7000, throttle: true, gear: 4, speed: 120,
+      shifting: false, revLimiterActive: false,
+    });
+    const highIncrement = ea._fireCount;
+
+    expect(highIncrement).toBeGreaterThan(lowIncrement);
+  });
+
+  it('micro-variation does not affect debug detune', () => {
+    ea.setEngineState({
+      rpm: 4000, throttle: true, gear: 2, speed: 50,
+      shifting: false, revLimiterActive: false,
+    });
+    // Debug detune should be clean: (4000-1000)*0.2 = 600
+    expect(ea.debugDetune).toBeCloseTo(600, 0);
+  });
+
+  it('micro-variation does not affect debug band gains', () => {
+    ea.setEngineState({
+      rpm: 4000, throttle: true, gear: 2, speed: 50,
+      shifting: false, revLimiterActive: false,
+      shiftOscillation: 0,
+    });
+    const g1 = { ...ea.debugBandGains };
+
+    ea.setEngineState({
+      rpm: 4000, throttle: true, gear: 2, speed: 50,
+      shifting: false, revLimiterActive: false,
+      shiftOscillation: 0,
+    });
+    const g2 = ea.debugBandGains;
+
+    // Debug gains should be identical regardless of fire counter position
+    expect(g1.on_low).toBeCloseTo(g2.on_low, 5);
+    expect(g1.on_high).toBeCloseTo(g2.on_high, 5);
+  });
+
+  it('has pre-computed cylinder offset arrays', () => {
+    expect(ea._cylDetuneOffsets.length).toBe(6);
+    expect(ea._cylGainOffsets.length).toBe(6);
+    // Offsets should be small (±3 cents, ±3%)
+    for (const d of ea._cylDetuneOffsets) {
+      expect(Math.abs(d)).toBeLessThanOrEqual(3);
+    }
+    for (const g of ea._cylGainOffsets) {
+      expect(Math.abs(g)).toBeLessThanOrEqual(0.03);
+    }
   });
 });
