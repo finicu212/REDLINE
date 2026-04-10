@@ -458,3 +458,117 @@ describe('Drivetrain — gear ratios', () => {
     expect(FINAL_DRIVE).toBeGreaterThan(0);
   });
 });
+
+describe('Drivetrain — NaN safety', () => {
+  /** Accelerate in 1st, then clutchless upshift so spring-damper is mid-engagement. */
+  function engagingInSecond(profile) {
+    const dt = new Drivetrain(profile);
+    dt.shiftUp();
+    for (let i = 0; i < 300; i++) dt.update(1 / 60, 1);
+    dt.shiftUp();
+    dt.update(1 / 60, 1);
+    return dt;
+  }
+
+  it('shifting to neutral mid-engagement cancels engagement and stays finite', () => {
+    const dt = engagingInSecond();
+    expect(dt._clutchEngaging).toBe(true);
+    dt.shiftDown(); // 2 -> 1
+    dt.shiftDown(); // 1 -> N
+    expect(dt.gear).toBe(0);
+    expect(dt._clutchEngaging).toBe(false);
+    for (let i = 0; i < 60; i++) dt.update(1 / 60, 1);
+    expect(Number.isFinite(dt.rpm)).toBe(true);
+    expect(Number.isFinite(dt.speed)).toBe(true);
+  });
+
+  it('small-delta re-shift during engagement ends stale engagement', () => {
+    const dt = engagingInSecond();
+    // Force a gear change whose wheel RPM matches engine RPM closely
+    dt.gear = 1;
+    const ratio = GEAR_RATIOS[1] * FINAL_DRIVE;
+    dt.rpm = ((dt.speed / 3.6) / 1.88) * 60 * ratio;
+    dt._engageClutch();
+    expect(dt._clutchEngaging).toBe(false);
+  });
+
+  it('recovers when internal state becomes non-finite', () => {
+    const dt = engagingInSecond();
+    for (let i = 0; i < 10; i++) dt.update(1 / 60, 1);
+    dt._wheelOmega = NaN;
+    dt.update(1 / 60, 1);
+    expect(Number.isFinite(dt.rpm)).toBe(true);
+    expect(Number.isFinite(dt.speed)).toBe(true);
+    expect(dt.rpm).toBeGreaterThanOrEqual(IDLE_RPM);
+    expect(dt._clutchEngaging).toBe(false);
+    expect(dt.nanRecoveries).toBe(1);
+    // Keeps simulating normally afterwards
+    const before = dt.rpm;
+    for (let i = 0; i < 30; i++) dt.update(1 / 60, 1);
+    expect(Number.isFinite(dt.rpm)).toBe(true);
+    expect(dt.rpm).not.toBe(before);
+  });
+
+  it('1st-gear clutch engagement stays stable at 20 FPS', () => {
+    const dt = new Drivetrain();
+    dt.shiftUp();
+    for (let i = 0; i < 60; i++) dt.update(1 / 60, 1);
+    dt.clutchHeld = true;
+    for (let i = 0; i < 30; i++) dt.update(0.05, 1); // rev up decoupled
+    dt.clutchHeld = false;
+    for (let i = 0; i < 100; i++) {
+      dt.update(0.05, 1);
+      expect(dt.speed).toBeLessThan(300);
+    }
+    expect(dt.nanRecoveries).toBe(0);
+  });
+
+  it('recovers from finite-but-runaway values', () => {
+    const dt = new Drivetrain();
+    dt.shiftUp();
+    for (let i = 0; i < 60; i++) dt.update(1 / 60, 1);
+    dt.speed = 1e200;
+    dt.update(1 / 60, 1);
+    expect(dt.speed).toBeLessThan(300);
+    expect(dt.nanRecoveries).toBe(1);
+  });
+
+  it('ignores non-finite dt and throttle inputs', () => {
+    const dt = new Drivetrain();
+    dt.update(NaN, 1);
+    dt.update(1 / 60, NaN);
+    dt.update(-0.01, 1);
+    expect(Number.isFinite(dt.rpm)).toBe(true);
+    expect(dt.nanRecoveries).toBe(0);
+  });
+
+  it('getState never exposes non-finite numbers', () => {
+    const dt = new Drivetrain();
+    dt.rpm = NaN;
+    dt.speed = Infinity;
+    const s = dt.getState();
+    expect(Number.isFinite(s.rpm)).toBe(true);
+    expect(Number.isFinite(s.speed)).toBe(true);
+  });
+
+  it('survives random shift/clutch mashing on every profile', async () => {
+    const { PROFILE_LIST } = await import('../profiles.js');
+    let seed = 12345;
+    const rand = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+    for (const profile of PROFILE_LIST) {
+      for (const frame of [1 / 144, 1 / 60, 1 / 30, 0.05]) {
+        const dt = new Drivetrain(profile);
+        for (let i = 0; i < 3000; i++) {
+          const r = rand();
+          if (r < 0.03) dt.shiftUp();
+          else if (r < 0.06) dt.shiftDown();
+          if (rand() < 0.02) dt.clutchHeld = !dt.clutchHeld;
+          dt.update(frame, rand() < 0.8 ? 1 : 0, rand() < 0.02);
+          expect(Number.isFinite(dt.rpm)).toBe(true);
+          expect(Number.isFinite(dt.speed)).toBe(true);
+        }
+        expect(dt.nanRecoveries).toBe(0); // root cause fixed — guard never needed
+      }
+    }
+  });
+});

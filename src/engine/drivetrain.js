@@ -65,6 +65,7 @@ const BOV_VENT_RATE = 40;            // psi/s — how fast BOV bleeds manifold p
 const CLUTCH_STIFFNESS = 190;    // Nm/rad — torsional spring constant
 const CLUTCH_DAMPING = 3.5;      // Nm·s/rad — torsional viscous damping
 const CLUTCH_SETTLE_THRESHOLD = 5; // RPM — snap together when deviation < this
+const CLUTCH_MAX_SUBSTEP = 0.002;  // s — keeps ω_n·h ≈ 0.1 in 1st gear (stable)
 
 const TORQUE_CURVE = [
   [850,  120],
@@ -77,6 +78,8 @@ const TORQUE_CURVE = [
   [7000, 230],
   [7200, 220],
 ];
+
+const SANE_SPEED_KMH = 1000;     // NaN guard: anything past this is a numerical blow-up
 
 const RADS_TO_RPM = 60 / (2 * Math.PI);
 const RPM_TO_RADS = (2 * Math.PI) / 60;
@@ -190,6 +193,11 @@ export class Drivetrain {
     this._turboShaftRPS = 0;         // turbine shaft speed (rev/s)
     this._bovActive = false;         // blow-off valve venting
     this._prevThrottle = 0;          // for BOV trigger detection
+
+    // NaN guard — last finite state, restored if a frame produces non-finite values
+    this._lastGoodRPM = this.rpm;
+    this._lastGoodSpeed = 0;
+    this.nanRecoveries = 0;
   }
 
   /** True when engine is decoupled from wheels (clutch held, engaging, or neutral). */
@@ -237,8 +245,8 @@ export class Drivetrain {
     const coupled = this.gear > 0 && !this.clutchHeld && !this._clutchEngaging;
     const totalRatio = this.gear > 0 ? this._gearRatios[this.gear] * this._finalDrive : 0;
     return {
-      rpm: Math.max(this._idleRPM, this.rpm),
-      speed: this.speed,
+      rpm: Number.isFinite(this.rpm) ? Math.max(this._idleRPM, this.rpm) : this._idleRPM,
+      speed: Number.isFinite(this.speed) ? this.speed : 0,
       gear: this.gear,
       gearLabel: this.gearLabel,
       shifting: false,
@@ -268,6 +276,7 @@ export class Drivetrain {
     const hadClutch = this.clutchHeld;
     this.gear += 1;
     if (!hadClutch && this.gear > 0 && this.speed > 0) this._engageClutch();
+    else if (this.gear === 0) this._cancelEngagement();
     return true;
   }
 
@@ -288,6 +297,8 @@ export class Drivetrain {
     const hadClutch = this.clutchHeld;
     this.gear = newGear;
     if (!hadClutch && this.gear > 0 && this.speed > 0) this._engageClutch();
+    // Spring-damper divides by totalRatio — must not keep running in neutral
+    else if (this.gear === 0) this._cancelEngagement();
     return true;
   }
 
@@ -305,8 +316,46 @@ export class Drivetrain {
       this._clutchInitialDelta = rpmDelta;
       this._oscRPMDelta = rpmDelta;
     } else {
+      // Close enough to snap; also ends any engagement left over from the previous gear
+      this._cancelEngagement();
       this.rpm = Math.max(this._idleRPM, Math.min(this._maxRPM, wheelRPM));
     }
+  }
+
+  /** @private Stop spring-damper engagement and clear its audio oscillation. */
+  _cancelEngagement() {
+    this._clutchEngaging = false;
+    this._clutchAngleDelta = 0;
+    this.shiftOscillation = 0;
+    this.shiftOscAmplitude = 0;
+  }
+
+  /**
+   * @private Restore last finite state if this frame produced NaN/Infinity.
+   * One bad frame must not freeze the sim: NaN never recovers on its own and
+   * throws inside Web Audio's setTargetAtTime, killing the render loop.
+   */
+  _guardFinite() {
+    // Finite-but-absurd values (diverging integrator) are caught too, before they overflow
+    const sane = (x, limit) => Number.isFinite(x) && Math.abs(x) < limit;
+    const rpmLimit = this._maxRPM * 4;
+    const ok = sane(this.rpm, rpmLimit) && sane(this.speed, SANE_SPEED_KMH)
+      && sane(this._wheelOmega, rpmLimit * RPM_TO_RADS) && sane(this._clutchAngleDelta, 1e4)
+      && sane(this.boostPsi, 1e3) && sane(this._turboShaftRPS, 1e6);
+    if (ok) {
+      this._lastGoodRPM = this.rpm;
+      this._lastGoodSpeed = this.speed;
+      return;
+    }
+    this.nanRecoveries += 1;
+    console.warn(`[drivetrain] non-finite or runaway state in gear ${this.gear}, restored last good (#${this.nanRecoveries})`);
+    this.rpm = this._lastGoodRPM;
+    this.speed = this._lastGoodSpeed;
+    this._cancelEngagement();
+    this._wheelOmega = 0;
+    this.boostPsi = 0;
+    this._turboShaftRPS = 0;
+    this._bovActive = false;
   }
 
   /**
@@ -316,8 +365,10 @@ export class Drivetrain {
    * @param {boolean} braking - true if brake is applied
    */
   update(dt, throttle, braking = false) {
+    if (!(dt > 0)) return; // NaN, zero, or negative (rAF timestamp before first performance.now())
     dt = Math.min(dt, 0.05);
-    throttle = Math.max(0, Math.min(1, throttle));
+    throttle = Number(throttle);
+    throttle = Number.isFinite(throttle) ? Math.max(0, Math.min(1, throttle)) : 0;
     this._lastThrottle = throttle;
     this._time += dt;
 
@@ -393,48 +444,12 @@ export class Drivetrain {
 
     // --- Clutch spring-damper engagement ---
     if (this._clutchEngaging) {
-      const engineOmega = this.rpm * RPM_TO_RADS;
-      const omegaDelta = this._wheelOmega - engineOmega;
-
-      // Integrate angular displacement
-      this._clutchAngleDelta += omegaDelta * dt;
-
-      // Spring-damper torque
-      const clutchTorque = CLUTCH_STIFFNESS * this._clutchAngleDelta + CLUTCH_DAMPING * omegaDelta;
-
-      // Apply to engine side (on top of drive/resistance torques)
-      const engineAlpha = (driveTorque - resistanceTorque + clutchTorque) / this._engineInertia;
-      this.rpm += engineAlpha * dt * RADS_TO_RPM;
-
-      // Apply reaction to wheel side (including aero + rolling drag)
-      const wheelJ = this._vehicleInertia / (totalRatio * totalRatio);
-      const v = this.speed / 3.6;
-      const dragForce = AERO_CD_A_RHO * v * v + ROLLING_RESISTANCE * VEHICLE_MASS;
-      const wheelRadius = this._tireCircumference / (2 * Math.PI);
-      const dragTorqueAtEngine = (dragForce * wheelRadius) / totalRatio;
-      this._wheelOmega += ((-clutchTorque - dragTorqueAtEngine) / wheelJ) * dt;
-
-      // Derive speed from wheel omega
-      this.speed = Math.max(0, (this._wheelOmega * RADS_TO_RPM / totalRatio) * this._tireCircumference / 60 * 3.6);
-
-      // Update audio oscillation from actual physics state
-      const rpmDeviation = this.rpm - (this._wheelOmega * RADS_TO_RPM);
-      if (Math.abs(this._clutchInitialDelta) > 1) {
-        this.shiftOscillation = Math.max(-1, Math.min(1, rpmDeviation / this._clutchInitialDelta));
-        this.shiftOscAmplitude = Math.min(1, Math.abs(rpmDeviation / this._clutchInitialDelta));
-      }
-
-      // Check convergence
-      const rpmDiff = Math.abs(this.rpm - this._wheelOmega * RADS_TO_RPM);
-      if (rpmDiff < CLUTCH_SETTLE_THRESHOLD && Math.abs(omegaDelta) < CLUTCH_SETTLE_THRESHOLD * RPM_TO_RADS) {
-        this._clutchEngaging = false;
-        // Snap to shared velocity (conserve momentum)
-        const Je = this._engineInertia;
-        const Jw = this._vehicleInertia / (totalRatio * totalRatio);
-        const sharedOmega = (Je * this.rpm * RPM_TO_RADS + Jw * this._wheelOmega) / (Je + Jw);
-        this.rpm = sharedOmega * RADS_TO_RPM;
-        this.shiftOscillation = 0;
-        this.shiftOscAmplitude = 0;
+      // Explicit Euler goes unstable once ω_n·dt approaches 2 (1st gear at 20 FPS),
+      // so integrate in fixed substeps well below that.
+      const steps = Math.ceil(dt / CLUTCH_MAX_SUBSTEP);
+      const h = dt / steps;
+      for (let i = 0; i < steps && this._clutchEngaging; i++) {
+        this._stepEngagement(h, driveTorque, resistanceTorque, totalRatio);
       }
     } else if (coupled) {
       // Rigid coupling — engine and wheels locked
@@ -496,6 +511,55 @@ export class Drivetrain {
         // Braking affects wheel side during clutch engagement
         this._wheelOmega = Math.max(0, (newSpeedMS / this._tireCircumference) * 2 * Math.PI * totalRatio);
       }
+    }
+
+    this._guardFinite();
+  }
+
+  /** @private One spring-damper integration step of length h seconds. */
+  _stepEngagement(h, driveTorque, resistanceTorque, totalRatio) {
+    const engineOmega = this.rpm * RPM_TO_RADS;
+    const omegaDelta = this._wheelOmega - engineOmega;
+
+    // Integrate angular displacement
+    this._clutchAngleDelta += omegaDelta * h;
+
+    // Spring-damper torque
+    const clutchTorque = CLUTCH_STIFFNESS * this._clutchAngleDelta + CLUTCH_DAMPING * omegaDelta;
+
+    // Apply to engine side (on top of drive/resistance torques)
+    const engineAlpha = (driveTorque - resistanceTorque + clutchTorque) / this._engineInertia;
+    this.rpm += engineAlpha * h * RADS_TO_RPM;
+
+    // Apply reaction to wheel side (including aero + rolling drag)
+    const wheelJ = this._vehicleInertia / (totalRatio * totalRatio);
+    const v = this.speed / 3.6;
+    const dragForce = AERO_CD_A_RHO * v * v + ROLLING_RESISTANCE * VEHICLE_MASS;
+    const wheelRadius = this._tireCircumference / (2 * Math.PI);
+    const dragTorqueAtEngine = (dragForce * wheelRadius) / totalRatio;
+    this._wheelOmega += ((-clutchTorque - dragTorqueAtEngine) / wheelJ) * h;
+
+    // Derive speed from wheel omega
+    this.speed = Math.max(0, (this._wheelOmega * RADS_TO_RPM / totalRatio) * this._tireCircumference / 60 * 3.6);
+
+    // Update audio oscillation from actual physics state
+    const rpmDeviation = this.rpm - (this._wheelOmega * RADS_TO_RPM);
+    if (Math.abs(this._clutchInitialDelta) > 1) {
+      this.shiftOscillation = Math.max(-1, Math.min(1, rpmDeviation / this._clutchInitialDelta));
+      this.shiftOscAmplitude = Math.min(1, Math.abs(rpmDeviation / this._clutchInitialDelta));
+    }
+
+    // Check convergence
+    const rpmDiff = Math.abs(this.rpm - this._wheelOmega * RADS_TO_RPM);
+    if (rpmDiff < CLUTCH_SETTLE_THRESHOLD && Math.abs(omegaDelta) < CLUTCH_SETTLE_THRESHOLD * RPM_TO_RADS) {
+      this._clutchEngaging = false;
+      // Snap to shared velocity (conserve momentum)
+      const Je = this._engineInertia;
+      const Jw = this._vehicleInertia / (totalRatio * totalRatio);
+      const sharedOmega = (Je * this.rpm * RPM_TO_RADS + Jw * this._wheelOmega) / (Je + Jw);
+      this.rpm = sharedOmega * RADS_TO_RPM;
+      this.shiftOscillation = 0;
+      this.shiftOscAmplitude = 0;
     }
   }
 
