@@ -62,6 +62,15 @@ const DEFAULT_TURBO_BOV_FILE = '/audio/turbo_bov.wav';
 const RPM_XFADE_LOW = 3000;
 const RPM_XFADE_HIGH = 6500;
 
+// Soft limiter hold: gain/pitch hunting while the taper holds RPM at redline
+const LIMITER_HUNT_HZ = 7;
+const LIMITER_HUNT_DEPTH = 0.22;
+const LIMITER_HUNT_CENTS = 18;
+
+// Hard limiter pop: short bandpassed noise burst per fuel cut
+const LIMITER_POP_MS = 45;
+const LIMITER_POP_LEVEL = 0.35;
+
 // Helical gear hum: pinion teeth for mesh frequency, peak gain (very quiet)
 const GEAR_HUM_TEETH = 11;
 const GEAR_HUM_LEVEL = 0.018;
@@ -247,6 +256,12 @@ export class EngineAudio {
     this._humOsc = null;
     this._humGain = null;
 
+    // Limiter character (soft hunt phase, hard-cut edge detection)
+    this._huntPhase = 0;
+    this._wasLimiting = false;
+    this._popBuffer = null;
+    this.debugLimiterHunt = 0;
+
     // Bank mode (profile.audio.bank): N samples recorded at known RPMs
     this._bank = this._fileConfig.bank || null;
     this._bankSources = [];
@@ -418,7 +433,7 @@ export class EngineAudio {
     // fill the gap. At 30% throttle you hear quiet on-samples + louder off-samples.
     // Equal-power curves keep total energy constant across the blend.
     // Rev limiter = fuel cut = off-throttle sound (engine is coasting even if pedal is down)
-    const { limiterStyle } = state;
+    const { limiterStyle, limiterLoad = 0 } = state;
     const pedal = Math.max(0, Math.min(1, throttle));
     // Soft limiter: partial, smoothed dip instead of a full on/off chop
     const throttleVal = revLimiterActive ? (limiterStyle === 'soft' ? pedal * 0.5 : 0) : pedal;
@@ -435,7 +450,8 @@ export class EngineAudio {
     // (not during rev limiter fuel cut, not off-throttle)
     const actualThrottle = Math.max(0, Math.min(1, throttle));
     let revBlend = 0;
-    if (!revLimiterActive && actualThrottle > 0.3 && nRPM > REV_BLEND_START) {
+    const hasRev = this.buffers.has(this._fileConfig.revFile);
+    if (hasRev && !revLimiterActive && actualThrottle > 0.3 && nRPM > REV_BLEND_START) {
       revBlend = Math.min(1, (nRPM - REV_BLEND_START) / (REV_BLEND_END - REV_BLEND_START)) * actualThrottle;
     }
     const pitchedMix = Math.cos(revBlend * Math.PI / 2);
@@ -444,9 +460,21 @@ export class EngineAudio {
     if (this._bank) {
       // Hard cuts must be audible per bounce; soft ones are smeared
       const tau = limiterStyle === 'hard' ? 0.006 : limiterStyle === 'soft' ? 0.035 : 0.05;
-      this._updateBank(pitchRPM, detuneWobble + microDetune, onGain * onVolume * pitchedMix * gainMod,
-        offGain * gainMod, 1.0 + microGain, now, tau);
+      // Soft hold: engine keeps singing at the limit, with a gentle ignition-retard "hunt"
+      this._huntPhase = (this._huntPhase + LIMITER_HUNT_HZ / 60) % 1;
+      const hunt = 0.5 + 0.5 * Math.sin(2 * Math.PI * this._huntPhase);
+      const huntGain = 1 - LIMITER_HUNT_DEPTH * limiterLoad * hunt;
+      const huntDetune = LIMITER_HUNT_CENTS * limiterLoad * (hunt - 0.5);
+      this.debugLimiterHunt = limiterLoad * hunt;
+      this._updateBank(pitchRPM, detuneWobble + microDetune + huntDetune,
+        onGain * onVolume * pitchedMix * gainMod * huntGain, offGain * gainMod, 1.0 + microGain, now, tau);
     }
+
+    // Hard limiter: exhaust pop on every fuel-cut bounce
+    if (limiterStyle === 'hard' && revLimiterActive && !this._wasLimiting && pedal > 0.1) {
+      this._playLimiterPop(now);
+    }
+    this._wasLimiting = revLimiterActive;
 
     const engineGainValues = {
       on_low:   onGain * onVolume * lowGain * pitchedMix * gainMod,
@@ -829,6 +857,29 @@ export class EngineAudio {
     const speedFactor = Math.min(1, speed / 150);
     const level = gear > 0 ? GEAR_HUM_LEVEL * speedFactor * (0.6 + 0.4 * pedal) : 0;
     this._humGain.gain.setTargetAtTime(level, now, 0.1);
+  }
+
+  _playLimiterPop(now) {
+    if (!this._popBuffer) {
+      const sr = this.ctx.sampleRate;
+      const len = Math.round(sr * LIMITER_POP_MS / 1000);
+      this._popBuffer = this.ctx.createBuffer(1, len, sr);
+      const d = this._popBuffer.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.exp(-i / (len * 0.25));
+    }
+    const src = this.ctx.createBufferSource();
+    src.buffer = this._popBuffer;
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 280 + Math.random() * 320; // vary so bounces don't sound machine-gunned
+    bp.Q.value = 1.2;
+    const g = this.ctx.createGain();
+    g.gain.value = LIMITER_POP_LEVEL * (0.8 + Math.random() * 0.4);
+    src.connect(bp);
+    bp.connect(g);
+    g.connect(this._engineBus);
+    src.start(now);
+    this.debugPops = (this.debugPops || 0) + 1;
   }
 
   _stopTransmission() {

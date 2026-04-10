@@ -29,25 +29,6 @@ function bacAudio() {
   };
 }
 
-function profileAudio(folder) {
-  return {
-    on_low:       `/audio/${folder}/on_low.wav`,
-    on_high:      `/audio/${folder}/on_high.wav`,
-    off_low:      `/audio/${folder}/off_low.wav`,
-    off_high:     `/audio/${folder}/off_high.wav`,
-    off_mid:      `/audio/${folder}/off_mid.wav`,
-    off_veryhigh: `/audio/${folder}/off_veryhigh.wav`,
-    rev:          `/audio/${folder}/rev.wav`,
-    limiter:      `/audio/${folder}/limiter.wav`,
-    trany:        `/audio/${folder}/trany_power.wav`,
-    tranyDecel: [
-      { band: 'verylow', file: `/audio/${folder}/tw_verylow.wav` },
-      { band: 'low',     file: `/audio/${folder}/tw_low.wav` },
-      { band: 'lowmid',  file: `/audio/${folder}/tw_lowmid.wav` },
-      { band: 'high',    file: `/audio/${folder}/tw_high.wav` },
-    ],
-  };
-}
 
 /**
  * Multi-sample bank: one loop per recorded RPM, pitched physically and
@@ -128,60 +109,6 @@ const I4_NA = {
   audio: bacAudio(),
 };
 
-/**
- * I4 Turbo — 2.0L Turbocharged Inline-4
- * BeamNG Hirochi Sunburst-style. Fat midrange plateau from turbo,
- * falls off at top. Quick-revving with short gearing.
- * NOTE: No turbo physics (boost/spool) — just the torque curve shape.
- */
-const I4_TURBO = {
-  id: 'i4_turbo',
-  name: 'I4 Turbo',
-  description: '2.0L Turbocharged Inline-4',
-  vehicle: 'Sport Compact',
-
-  cylinders: 4,
-  layout: 'inline',
-
-  idleRPM: 850,
-  redlineRPM: 6800,
-  revCutRPM: 6500,
-  maxRPM: 6800,
-  tachoMaxRPM: 7500,
-
-  torqueCurve: [
-    [850,  150],
-    [2000, 200],
-    [2500, 280],
-    [3000, 330],
-    [3500, 350],
-    [4000, 340],
-    [5000, 310],
-    [6000, 270],
-    [6500, 240],
-    [6800, 220],
-  ],
-
-  gearRatios: [0, 3.587, 2.022, 1.384, 1.000, 0.861],
-  finalDrive: 3.938,
-  tireCircumference: 1.88,
-
-  engineInertia: 0.18,
-  vehicleInertia: 95,
-
-  frictionTorque: 8,
-  engineBrakingFactor: 14,
-  brakeDecel: 9.0,
-
-  shiftDuration: 150,
-
-  turbo: true,
-
-  exhaust: { pipeLength: 1.2, diameter: 0.07, wet: 0.25 },
-
-  audio: profileAudio('i4_turbo'),
-};
-
 // --- Real-car profiles (multi-sample banks) ---
 // Specs from manufacturer data; torque curves shaped to hit published peak torque
 // and peak power at their RPMs. Engine-sim sets: preset matched by rev limit.
@@ -207,7 +134,7 @@ const I4_2 = {
   revCutRPM: 7500,
   maxRPM: 7800,
   tachoMaxRPM: 9000,
-  limiter: { style: 'soft', cutMs: 70, softRangeRPM: 250 },
+  limiter: { style: 'hard', cutMs: 70 },
 
   torqueCurve: [
     [850,  105],
@@ -259,7 +186,7 @@ const I4_3 = {
   revCutRPM: 6400,
   maxRPM: 6700,
   tachoMaxRPM: 7000,
-  limiter: { style: 'soft', cutMs: 120, softRangeRPM: 300 },
+  limiter: { style: 'soft', cutMs: 0, softRangeRPM: 300 },
 
   torqueCurve: [
     [780,  110],
@@ -311,7 +238,7 @@ const V6_1 = {
   revCutRPM: 7400,
   maxRPM: 7700,
   tachoMaxRPM: 9000,
-  limiter: { style: 'soft', cutMs: 80, softRangeRPM: 250 },
+  limiter: { style: 'hard', cutMs: 80 },
 
   torqueCurve: [
     [700,  230],
@@ -346,7 +273,7 @@ const V6_1 = {
 
 /**
  * DeLorean DMC-12 — PRV ZMJ-159 2.85L 90° odd-fire V6 (K-Jetronic)
- * 130 hp @ 5500, 220 Nm @ 2750. No electronic rev limiter — breathing runs out.
+ * 130 hp @ 5500, 220 Nm @ 2750. No electronic cut — soft hold at redline, engine keeps singing.
  * Renault UN1 5-speed, 3.44 final.
  */
 const V6_2 = {
@@ -364,7 +291,7 @@ const V6_2 = {
   revCutRPM: 5900,
   maxRPM: 6500,
   tachoMaxRPM: 7000,
-  limiter: { style: 'none' },
+  limiter: { style: 'soft', cutMs: 0, softRangeRPM: 350 },
 
   torqueCurve: [
     [900,  160],
@@ -415,7 +342,7 @@ const V8_1 = {
   revCutRPM: 6500,
   maxRPM: 6800,
   tachoMaxRPM: 7000,
-  limiter: { style: 'soft', cutMs: 100, softRangeRPM: 200 },
+  limiter: { style: 'hard', cutMs: 100 },
 
   torqueCurve: [
     [700,  380],
@@ -450,7 +377,7 @@ const V8_1 = {
 
 /**
  * Chevrolet Chevelle SS 454 (1970) — LS6 7.4L big-block V8 (engine-sim "Chev. 454")
- * 450 hp (gross) @ 5600, 678 Nm @ 3600. Points ignition, no rev limiter.
+ * 450 hp (gross) @ 5600, 678 Nm @ 3600. Points ignition, no cut — soft hold at redline.
  * Muncie M22 4-speed, 3.73 final.
  */
 const V8_2 = {
@@ -468,7 +395,7 @@ const V8_2 = {
   revCutRPM: 5900,
   maxRPM: 6800,
   tachoMaxRPM: 8000,
-  limiter: { style: 'none' },
+  limiter: { style: 'soft', cutMs: 0, softRangeRPM: 400 },
 
   torqueCurve: [
     [750,  430],
@@ -520,7 +447,7 @@ const V8_3 = {
   revCutRPM: 8900,
   maxRPM: 9200,
   tachoMaxRPM: 10000,
-  limiter: { style: 'soft', cutMs: 60, softRangeRPM: 200 },
+  limiter: { style: 'hard', cutMs: 50 },
 
   torqueCurve: [
     [1000, 300],
@@ -559,7 +486,6 @@ const V8_3 = {
 /** Profile list for UI iteration (stable order) */
 export const PROFILE_LIST = [
   I4_NA, I4_2, I4_3,
-  I4_TURBO,
   V6_1, V6_2,
   V8_1, V8_2, V8_3,
 ];

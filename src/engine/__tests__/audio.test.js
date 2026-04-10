@@ -707,3 +707,44 @@ describe('EngineAudio — road-car layers', () => {
     expect(hard).toBeCloseTo(0, 5);
   });
 });
+
+describe('EngineAudio — limiter character', () => {
+  const prof = {
+    idleRPM: 800, redlineRPM: 6000, cylinders: 8, turbo: false,
+    audio: { bank: [{ rpm: 3000, file: '/a/3.wav' }, { rpm: 6000, file: '/a/6.wav' }],
+      rev: null, limiter: null, trany: null, tranyDecel: null },
+  };
+  let ea;
+  beforeEach(async () => {
+    vi.stubGlobal('AudioContext', MockAudioContext);
+    vi.stubGlobal('fetch', mockFetch());
+    ea = new EngineAudio(prof);
+    await ea.init();
+    ea.start();
+  });
+  const st = o => ({ rpm: 5990, throttle: 1, gear: 0, speed: 0, shifting: false, revLimiterActive: false, ...o });
+
+  it('soft hold keeps the on-throttle bank playing, with a gentle hunt', () => {
+    const gains = [];
+    for (let i = 0; i < 20; i++) {
+      ea.setEngineState(st({ limiterStyle: 'soft', limiterLoad: 1 }));
+      gains.push(ea._bankOnGains[1].gain.value);
+    }
+    expect(Math.min(...gains)).toBeGreaterThan(0.6);   // never cut
+    expect(Math.max(...gains) - Math.min(...gains)).toBeGreaterThan(0.05); // but audibly hunting
+  });
+
+  it('hard limiter pops once per fuel-cut bounce', () => {
+    ea.setEngineState(st({ limiterStyle: 'hard' }));
+    ea.setEngineState(st({ limiterStyle: 'hard', revLimiterActive: true }));
+    ea.setEngineState(st({ limiterStyle: 'hard', revLimiterActive: true }));
+    ea.setEngineState(st({ limiterStyle: 'hard' }));
+    ea.setEngineState(st({ limiterStyle: 'hard', revLimiterActive: true }));
+    expect(ea.debugPops).toBe(2);
+  });
+
+  it('soft limiter never pops', () => {
+    ea.setEngineState(st({ limiterStyle: 'soft', revLimiterActive: true }));
+    expect(ea.debugPops).toBeUndefined();
+  });
+});

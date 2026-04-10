@@ -611,12 +611,29 @@ describe('Drivetrain — limiter styles', () => {
     expect(frames).toBeLessThanOrEqual(13);
   });
 
+  it('hard cut bounces tightly around redline in neutral (no ratcheting)', () => {
+    const dt = new Drivetrain({ ...base, limiter: { style: 'hard', cutMs: 60 } });
+    revNeutral(dt, 240);
+    const { maxRPM, cuts } = revNeutral(dt, 240);
+    expect(maxRPM).toBeLessThan(6100);
+    expect(cuts).toBeGreaterThan(5); // audible bounce: several cuts per 2 s
+  });
+
   it('soft limiter tapers torque before redline', () => {
     const dt = new Drivetrain({ ...base, limiter: { style: 'soft', cutMs: 80, softRangeRPM: 300 } });
     const hard = new Drivetrain({ ...base, limiter: { style: 'hard', cutMs: 80 } });
     expect(dt._throttleTorque(5900, 1)).toBeLessThan(hard._throttleTorque(5900, 1));
     expect(dt._throttleTorque(5000, 1)).toBe(hard._throttleTorque(5000, 1));
     expect(dt.getState().limiterStyle).toBe('soft');
+  });
+
+  it('soft hold (cutMs 0) never cuts and settles at redline', () => {
+    const dt = new Drivetrain({ ...base, limiter: { style: 'soft', cutMs: 0, softRangeRPM: 300 } });
+    const { maxRPM, cuts } = revNeutral(dt, 600);
+    expect(cuts).toBe(0);
+    expect(maxRPM).toBeGreaterThan(5600);
+    expect(maxRPM).toBeLessThanOrEqual(6000);
+    expect(dt.getState().limiterLoad).toBeGreaterThan(0.5);
   });
 
   it('no limiter never cuts; breathing falloff caps RPM', () => {

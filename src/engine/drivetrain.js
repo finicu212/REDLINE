@@ -80,6 +80,10 @@ const TORQUE_CURVE = [
 
 const SANE_SPEED_KMH = 1000;     // NaN guard: anything past this is a numerical blow-up
 
+// Hard limiter bounce: extra friction on unfired cycles, and max overshoot per frame
+const HARD_CUT_FRICTION_PER_KRPM = 0.5;
+const HARD_CUT_MAX_OVERSHOOT = 60; // RPM
+
 const RADS_TO_RPM = 60 / (2 * Math.PI);
 const RPM_TO_RADS = (2 * Math.PI) / 60;
 
@@ -165,7 +169,8 @@ export class Drivetrain {
     this._maxRPM = p ? p.maxRPM : MAX_RPM;
     this._mass = p?.mass ?? VEHICLE_MASS;
     // hysteresis: fuel cut until RPM falls below revCutRPM (legacy)
-    // hard/soft:  timed fuel cut of cutMs; soft also tapers torque over the last softRangeRPM
+    // hard:       timed fuel cut of cutMs — the GT-style bounce
+    // soft:       torque taper over the last softRangeRPM; with cutMs 0 it only holds, never cuts
     // none:       no limiter — torque falloff past redline is the only ceiling (carb/points era)
     this._limiter = p?.limiter ?? { style: 'hysteresis' };
     this._limiterTimer = 0;
@@ -230,11 +235,12 @@ export class Drivetrain {
 
     // Base torque from curve, with falloff above redline (breathing limits)
     let wotTorque = this._lerpTorque(rpm);
-    const { style, softRangeRPM = 0 } = this._limiter;
+    const { style, softRangeRPM = 0, cutMs = 0 } = this._limiter;
     const softStart = this._redlineRPM - softRangeRPM;
     if (style === 'soft' && softRangeRPM > 0 && rpm > softStart) {
-      // Ignition-retard style taper into the cut instead of slamming into it
-      wotTorque *= Math.max(0.15, 1 - 0.85 * (rpm - softStart) / softRangeRPM);
+      // Ignition-retard taper. Pure hold (no cut) tapers to zero so RPM settles at redline.
+      const floor = cutMs > 0 ? 0.15 : 0;
+      wotTorque *= Math.max(floor, 1 - (1 - floor) * (rpm - softStart) / softRangeRPM);
     }
     if (rpm > this._redlineRPM) {
       // Torque drops ~40% per 1000 RPM above redline (valve float, poor breathing).
@@ -279,6 +285,7 @@ export class Drivetrain {
       shiftOscRPMDelta: this._oscRPMDelta,
       // Turbo
       limiterStyle: this._limiter.style,
+      limiterLoad: this._limiterLoad(),
       boostPsi: this.boostPsi,
       turboSpool: this._turboShaftRPS / TURBO_MAX_SHAFT_RPS,
       bovActive: this._bovActive,
@@ -337,15 +344,26 @@ export class Drivetrain {
     }
   }
 
+  /** 0–1: how deep into the soft-hold band the engine is while on throttle (drives audio hunting). */
+  _limiterLoad() {
+    const { style, softRangeRPM = 0 } = this._limiter;
+    if (style !== 'soft' || !softRangeRPM || this._lastThrottle < 0.05) return 0;
+    const x = (this.rpm - (this._redlineRPM - softRangeRPM)) / softRangeRPM;
+    return Math.max(0, Math.min(1, x)) * this._lastThrottle;
+  }
+
   /** @private Fuel cut per the profile's limiter style. */
   _updateRevLimiter(dt) {
     const { style, cutMs = 0 } = this._limiter;
     if (style === 'none') {
       this.revLimiterActive = false;
+    } else if (style === 'soft' && !cutMs) {
+      this.revLimiterActive = false;
     } else if (style === 'hard' || style === 'soft') {
       if (this._limiterTimer > 0) {
         this._limiterTimer -= dt;
-        this.revLimiterActive = this._limiterTimer > 0;
+        // Minimum cut elapsed — fuel resumes only once RPM is back under the limit
+        this.revLimiterActive = this._limiterTimer > 0 || this.rpm >= this._redlineRPM;
       } else if (this.rpm >= this._redlineRPM) {
         this._limiterTimer = cutMs / 1000;
         this.revLimiterActive = true;
@@ -472,6 +490,10 @@ export class Drivetrain {
 
     if (this.revLimiterActive) {
       resistanceTorque += this._engineBrakingFactor * 2;
+      // Unfired cylinders still pay friction, which grows with RPM — this is what drops the needle
+      if (this._limiter.style === 'hard') {
+        resistanceTorque += this._frictionTorque * (this.rpm / 1000) * HARD_CUT_FRICTION_PER_KRPM;
+      }
     }
 
     // --- Clutch spring-damper engagement ---
@@ -516,6 +538,11 @@ export class Drivetrain {
     if (!this._clutchEngaging && this.shiftOscAmplitude > 0) {
       this.shiftOscillation = 0;
       this.shiftOscAmplitude = 0;
+    }
+
+    // A real ECU cuts at a crank angle, not a frame boundary: cap per-frame overshoot
+    if (this._limiter.style === 'hard' && !this.revLimiterActive && this.rpm > this._redlineRPM + HARD_CUT_MAX_OVERSHOOT) {
+      this.rpm = this._redlineRPM + HARD_CUT_MAX_OVERSHOOT;
     }
 
     // Floor RPM at idle (never stall)
