@@ -26,11 +26,29 @@ describe('Engine profiles — sound candidates', () => {
     expect(count('v8_')).toBeGreaterThanOrEqual(2);
   });
 
-  it('variants share physics with their engine type', () => {
-    expect(PROFILES.v8_1.cylinders).toBe(8);
-    expect(PROFILES.v8_1.torqueCurve).toBe(PROFILES.v8_2.torqueCurve);
-    expect(PROFILES.v6_1.cylinders).toBe(6);
-    expect(PROFILES.i4_1.cylinders).toBe(4);
+  it('every bank profile is a real car with its own specs and limiter', () => {
+    for (const p of PROFILE_LIST.filter(p => p.audio.bank)) {
+      expect(p.vehicle, p.id).toBeTruthy();
+      expect(p.mass, p.id).toBeGreaterThan(800);
+      expect(['hard', 'soft', 'none', 'hysteresis']).toContain(p.limiter.style);
+      expect(p.maxRPM).toBeGreaterThanOrEqual(p.redlineRPM);
+    }
+  });
+
+  it('road cars drop the straight-cut whine and limiter loop for gear hum', () => {
+    for (const p of PROFILE_LIST.filter(p => p.audio.bank)) {
+      expect(p.audio.trany, p.id).toBeNull();
+      expect(p.audio.limiter, p.id).toBeNull();
+      expect(p.audio.gearHum, p.id).toBe(true);
+    }
+  });
+
+  it('torque curves reproduce published peak power (±3%)', () => {
+    const published = { i4_2: 128, i4_3: 101, v6_1: 332, v6_2: 130, v8_1: 430, v8_2: 450, v8_3: 562 };
+    for (const [id, hp] of Object.entries(published)) {
+      const peak = Math.max(...PROFILES[id].torqueCurve.map(([r, t]) => t * r * 2 * Math.PI / 60 / 745.7));
+      expect(Math.abs(peak - hp) / hp, id).toBeLessThan(0.03);
+    }
   });
 });
 
@@ -90,7 +108,7 @@ describe('Engine profiles — field validation', () => {
         });
       }
 
-      it('audio.tranyDecel has 4 entries', () => {
+      it.skipIf(profile.audio.bank)('audio.tranyDecel has 4 entries', () => {
         expect(profile.audio.tranyDecel).toHaveLength(4);
         for (const entry of profile.audio.tranyDecel) {
           expect(entry).toHaveProperty('band');

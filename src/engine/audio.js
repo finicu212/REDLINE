@@ -62,6 +62,10 @@ const DEFAULT_TURBO_BOV_FILE = '/audio/turbo_bov.wav';
 const RPM_XFADE_LOW = 3000;
 const RPM_XFADE_HIGH = 6500;
 
+// Helical gear hum: pinion teeth for mesh frequency, peak gain (very quiet)
+const GEAR_HUM_TEETH = 11;
+const GEAR_HUM_LEVEL = 0.018;
+
 // Bank mode off-throttle path: quieter, lowpassed, opening up with RPM
 const BANK_OFF_LEVEL = 0.55;
 const BANK_OFF_CUTOFF_BASE = 400;     // Hz
@@ -92,10 +96,11 @@ function buildFileConfig(profile) {
       bank: a.bank,
       engineSamples: {},
       engineExtraOff: {},
-      tranyDecel: a.tranyDecel || DEFAULT_TRANY_DECEL,
+      // null disables a layer (road cars: no straight-cut whine, no harsh limiter loop)
+      tranyDecel: a.tranyDecel === undefined ? DEFAULT_TRANY_DECEL : (a.tranyDecel || []),
       revFile: a.rev === undefined ? DEFAULT_REV_FILE : a.rev,
-      limiterFile: a.limiter || DEFAULT_LIMITER_FILE,
-      tranyFile: a.trany || DEFAULT_TRANY_FILE,
+      limiterFile: a.limiter === undefined ? DEFAULT_LIMITER_FILE : a.limiter,
+      tranyFile: a.trany === undefined ? DEFAULT_TRANY_FILE : a.trany,
       turboWhineFile: a.turboWhine || DEFAULT_TURBO_WHINE_FILE,
       turboBovFile: a.turboBov || DEFAULT_TURBO_BOV_FILE,
     };
@@ -234,6 +239,13 @@ export class EngineAudio {
     this._pipeLength = p?.exhaust?.pipeLength ?? 1.5;
     this._pipeDiameter = p?.exhaust?.diameter ?? 0.08;
     this._exhaustWet = p?.exhaust?.wet ?? 0.3;
+
+    // Helical gear hum (road cars) — synthesized, pitched by output-shaft speed
+    this._gearHum = !!p?.audio?.gearHum;
+    this._finalDrive = p?.finalDrive ?? 4.1;
+    this._tireCircumference = p?.tireCircumference ?? 1.88;
+    this._humOsc = null;
+    this._humGain = null;
 
     // Bank mode (profile.audio.bank): N samples recorded at known RPMs
     this._bank = this._fileConfig.bank || null;
@@ -406,7 +418,10 @@ export class EngineAudio {
     // fill the gap. At 30% throttle you hear quiet on-samples + louder off-samples.
     // Equal-power curves keep total energy constant across the blend.
     // Rev limiter = fuel cut = off-throttle sound (engine is coasting even if pedal is down)
-    const throttleVal = revLimiterActive ? 0 : Math.max(0, Math.min(1, throttle));
+    const { limiterStyle } = state;
+    const pedal = Math.max(0, Math.min(1, throttle));
+    // Soft limiter: partial, smoothed dip instead of a full on/off chop
+    const throttleVal = revLimiterActive ? (limiterStyle === 'soft' ? pedal * 0.5 : 0) : pedal;
     const onGain  = Math.sin(throttleVal * Math.PI / 2);   // 0→0, 0.5→0.71, 1→1
     const offGain = Math.cos(throttleVal * Math.PI / 2);   // 0→1, 0.5→0.71, 1→0
     // Additional volume scaling: on-samples get quieter at low throttle
@@ -427,8 +442,10 @@ export class EngineAudio {
     const revMix = Math.sin(revBlend * Math.PI / 2);
 
     if (this._bank) {
+      // Hard cuts must be audible per bounce; soft ones are smeared
+      const tau = limiterStyle === 'hard' ? 0.006 : limiterStyle === 'soft' ? 0.035 : 0.05;
       this._updateBank(pitchRPM, detuneWobble + microDetune, onGain * onVolume * pitchedMix * gainMod,
-        offGain * gainMod, 1.0 + microGain, now);
+        offGain * gainMod, 1.0 + microGain, now, tau);
     }
 
     const engineGainValues = {
@@ -473,6 +490,7 @@ export class EngineAudio {
 
     // --- 6. Transmission whine (with oscillation modulation) ---
     this._updateTransmission(speed, gear, gainMod, now);
+    if (this._gearHum) this._updateGearHum(speed, gear, pedal, now);
 
     // --- 7. Shift thud (context-aware) ---
     if (this._lastGear === -1) this._lastGear = gear;
@@ -637,7 +655,7 @@ export class EngineAudio {
     }
   }
 
-  _updateBank(rpm, extraDetune, onLevel, offLevel, micro, now) {
+  _updateBank(rpm, extraDetune, onLevel, offLevel, micro, now, tau = 0.05) {
     const weights = bankWeights(this._bank.map(b => b.rpm), rpm);
     const debug = {};
     let loudest = 0;
@@ -649,8 +667,8 @@ export class EngineAudio {
       const vol = entry.volume ?? 1;
       const on = weights[i] * onLevel * vol * micro;
       const off = weights[i] * offLevel * vol * BANK_OFF_LEVEL;
-      this._bankOnGains[i].gain.setTargetAtTime(on, now, 0.05);
-      this._bankOffGains[i].gain.setTargetAtTime(off, now, 0.05);
+      this._bankOnGains[i].gain.setTargetAtTime(on, now, tau);
+      this._bankOffGains[i].gain.setTargetAtTime(off, now, tau);
       debug[`${entry.rpm}`] = on + off;
     });
     if (this._bankOffFilter) {
@@ -787,10 +805,39 @@ export class EngineAudio {
     this._tranyGain.gain.setTargetAtTime(gearFactor * speedFactor * 0.15 * gainMod, now, 0.08);
   }
 
+  /**
+   * Helical gears mesh smoothly: a quiet, lowpassed hum at tooth-mesh frequency
+   * (output shaft rev/s × teeth), slightly louder under load. No straight-cut scream.
+   */
+  _updateGearHum(speed, gear, pedal, now) {
+    if (!this._humOsc) {
+      this._humFilter = this.ctx.createBiquadFilter();
+      this._humFilter.type = 'lowpass';
+      this._humFilter.frequency.value = 900;
+      this._humFilter.connect(this._engineBus);
+      this._humGain = this.ctx.createGain();
+      this._humGain.gain.value = 0;
+      this._humGain.connect(this._humFilter);
+      this._humOsc = this.ctx.createOscillator();
+      this._humOsc.type = 'triangle';
+      this._humOsc.connect(this._humGain);
+      this._humOsc.start(now);
+    }
+    const wheelRPS = (speed / 3.6) / this._tireCircumference;
+    const meshHz = Math.max(20, Math.min(1200, wheelRPS * this._finalDrive * GEAR_HUM_TEETH));
+    this._humOsc.frequency.setTargetAtTime(meshHz, now, 0.05);
+    const speedFactor = Math.min(1, speed / 150);
+    const level = gear > 0 ? GEAR_HUM_LEVEL * speedFactor * (0.6 + 0.4 * pedal) : 0;
+    this._humGain.gain.setTargetAtTime(level, now, 0.1);
+  }
+
   _stopTransmission() {
     if (this._tranySource) { try { this._tranySource.stop(); } catch {} }
     this._tranySource = null;
     this._tranyGain = null;
+    if (this._humOsc) { try { this._humOsc.stop(); } catch {} }
+    this._humOsc = null;
+    this._humGain = null;
   }
 
   // === Shift thud ===

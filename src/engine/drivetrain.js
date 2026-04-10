@@ -42,7 +42,6 @@ const AERO_CD_A_RHO = 0.45;     // 0.5 * Cd * A * ρ (Cd≈0.3, A≈2m², ρ≈1
 const VEHICLE_MASS = 1300;       // kg — for F=ma aero drag deceleration
 
 // Idle air control — restoring torque that holds RPM near IDLE_RPM when decoupled
-const IDLE_TARGET_RPM = 850;
 const IDLE_RESTORE_GAIN = 15;    // Nm per 1000 RPM below target — simulates IAC valve
 
 // Idle fluctuation — per-cylinder firing impulse makes idle imperfect
@@ -164,6 +163,12 @@ export class Drivetrain {
     this._redlineRPM = p ? p.redlineRPM : REDLINE_RPM;
     this._revCutRPM = p ? p.revCutRPM : REV_CUT_RPM;
     this._maxRPM = p ? p.maxRPM : MAX_RPM;
+    this._mass = p?.mass ?? VEHICLE_MASS;
+    // hysteresis: fuel cut until RPM falls below revCutRPM (legacy)
+    // hard/soft:  timed fuel cut of cutMs; soft also tapers torque over the last softRangeRPM
+    // none:       no limiter — torque falloff past redline is the only ceiling (carb/points era)
+    this._limiter = p?.limiter ?? { style: 'hysteresis' };
+    this._limiterTimer = 0;
     this._maxGear = this._gearRatios.length - 1;
     this._peakPower = computePeakPower(this._torqueCurve);
 
@@ -225,10 +230,19 @@ export class Drivetrain {
 
     // Base torque from curve, with falloff above redline (breathing limits)
     let wotTorque = this._lerpTorque(rpm);
+    const { style, softRangeRPM = 0 } = this._limiter;
+    const softStart = this._redlineRPM - softRangeRPM;
+    if (style === 'soft' && softRangeRPM > 0 && rpm > softStart) {
+      // Ignition-retard style taper into the cut instead of slamming into it
+      wotTorque *= Math.max(0.15, 1 - 0.85 * (rpm - softStart) / softRangeRPM);
+    }
     if (rpm > this._redlineRPM) {
-      // Torque drops ~40% per 1000 RPM above redline (valve float, poor breathing)
+      // Torque drops ~40% per 1000 RPM above redline (valve float, poor breathing).
+      // Without a limiter that falloff is the ceiling, so let it reach zero.
       const overRev = (rpm - this._redlineRPM) / 1000;
-      wotTorque *= Math.max(0.05, 1 - 0.4 * overRev);
+      wotTorque *= style === 'none'
+        ? Math.max(0, 1 - overRev)
+        : Math.max(0.05, 1 - 0.4 * overRev);
     }
 
     // Constant-power limit applies at ALL throttle positions including WOT.
@@ -264,6 +278,7 @@ export class Drivetrain {
       shiftOscAmplitude: this.shiftOscAmplitude,
       shiftOscRPMDelta: this._oscRPMDelta,
       // Turbo
+      limiterStyle: this._limiter.style,
       boostPsi: this.boostPsi,
       turboSpool: this._turboShaftRPS / TURBO_MAX_SHAFT_RPS,
       bovActive: this._bovActive,
@@ -319,6 +334,28 @@ export class Drivetrain {
       // Close enough to snap; also ends any engagement left over from the previous gear
       this._cancelEngagement();
       this.rpm = Math.max(this._idleRPM, Math.min(this._maxRPM, wheelRPM));
+    }
+  }
+
+  /** @private Fuel cut per the profile's limiter style. */
+  _updateRevLimiter(dt) {
+    const { style, cutMs = 0 } = this._limiter;
+    if (style === 'none') {
+      this.revLimiterActive = false;
+    } else if (style === 'hard' || style === 'soft') {
+      if (this._limiterTimer > 0) {
+        this._limiterTimer -= dt;
+        this.revLimiterActive = this._limiterTimer > 0;
+      } else if (this.rpm >= this._redlineRPM) {
+        this._limiterTimer = cutMs / 1000;
+        this.revLimiterActive = true;
+      } else {
+        this.revLimiterActive = false;
+      }
+    } else if (this.rpm >= this._redlineRPM) {
+      this.revLimiterActive = true;
+    } else if (this.rpm < this._revCutRPM) {
+      this.revLimiterActive = false;
     }
   }
 
@@ -401,12 +438,7 @@ export class Drivetrain {
 
     const coupled = this.gear > 0 && !this.clutchHeld && !this._clutchEngaging;
 
-    // Rev limiter (fuel cut with hysteresis)
-    if (this.rpm >= this._redlineRPM) {
-      this.revLimiterActive = true;
-    } else if (this.rpm < this._revCutRPM) {
-      this.revLimiterActive = false;
-    }
+    this._updateRevLimiter(dt);
 
     // Update turbo spool (only if profile has turbo)
     if (this._hasTurbo) this._updateTurbo(dt, throttle);
@@ -428,7 +460,7 @@ export class Drivetrain {
       resistanceTorque += this._engineBrakingFactor * totalRatio * closedThrottle;
       // Aero + rolling drag reflected through drivetrain as engine resistance torque
       const v = this.speed / 3.6; // m/s
-      const dragForce = AERO_CD_A_RHO * v * v + ROLLING_RESISTANCE * VEHICLE_MASS;
+      const dragForce = AERO_CD_A_RHO * v * v + ROLLING_RESISTANCE * this._mass;
       const wheelRadius = this._tireCircumference / (2 * Math.PI);
       resistanceTorque += (dragForce * wheelRadius) / totalRatio;
     } else {
@@ -464,8 +496,8 @@ export class Drivetrain {
       let netTorque = driveTorque - resistanceTorque;
 
       // Idle air control: restoring torque pulls RPM back toward idle target
-      if (throttle < 0.05 && this.rpm < IDLE_TARGET_RPM + 200) {
-        const deficit = (IDLE_TARGET_RPM - this.rpm) / 1000; // per 1000 RPM
+      if (throttle < 0.05 && this.rpm < this._idleRPM + 200) {
+        const deficit = (this._idleRPM - this.rpm) / 1000; // per 1000 RPM
         netTorque += IDLE_RESTORE_GAIN * deficit;
       }
 
@@ -474,7 +506,7 @@ export class Drivetrain {
       // Vehicle coasts — rolling resistance + aero drag
       if (this.speed > 0) {
         const v = this.speed / 3.6; // m/s
-        const aeroDrag = AERO_CD_A_RHO * v * v / VEHICLE_MASS; // m/s²
+        const aeroDrag = AERO_CD_A_RHO * v * v / this._mass; // m/s²
         const decel = ROLLING_RESISTANCE + aeroDrag;
         this.speed = Math.max(0, this.speed - decel * dt * 3.6);
       }
@@ -534,7 +566,7 @@ export class Drivetrain {
     // Apply reaction to wheel side (including aero + rolling drag)
     const wheelJ = this._vehicleInertia / (totalRatio * totalRatio);
     const v = this.speed / 3.6;
-    const dragForce = AERO_CD_A_RHO * v * v + ROLLING_RESISTANCE * VEHICLE_MASS;
+    const dragForce = AERO_CD_A_RHO * v * v + ROLLING_RESISTANCE * this._mass;
     const wheelRadius = this._tireCircumference / (2 * Math.PI);
     const dragTorqueAtEngine = (dragForce * wheelRadius) / totalRatio;
     this._wheelOmega += ((-clutchTorque - dragTorqueAtEngine) / wheelJ) * h;

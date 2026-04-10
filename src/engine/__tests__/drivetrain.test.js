@@ -575,3 +575,55 @@ describe('Drivetrain — NaN safety', () => {
     }
   });
 });
+
+describe('Drivetrain — limiter styles', () => {
+  const base = { ...PROFILES_FOR_LIMITER() };
+  function PROFILES_FOR_LIMITER() {
+    return {
+      idleRPM: 800, redlineRPM: 6000, revCutRPM: 5900, maxRPM: 6500, tachoMaxRPM: 7000,
+      torqueCurve: [[800, 200], [4000, 300], [6000, 280], [7000, 250]],
+      gearRatios: [0, 3, 2], finalDrive: 3.5, tireCircumference: 2,
+      engineInertia: 0.2, vehicleInertia: 100, frictionTorque: 8, engineBrakingFactor: 12,
+      brakeDecel: 9, shiftDuration: 150, turbo: false, mass: 1400,
+    };
+  }
+  const revNeutral = (dt, frames = 240) => {
+    let maxRPM = 0, cuts = 0, wasActive = false;
+    for (let i = 0; i < frames; i++) {
+      dt.update(1 / 120, 1);
+      maxRPM = Math.max(maxRPM, dt.rpm);
+      if (dt.revLimiterActive && !wasActive) cuts++;
+      wasActive = dt.revLimiterActive;
+    }
+    return { maxRPM, cuts };
+  };
+
+  it('hard cut holds fuel off for cutMs, then bounces', () => {
+    const dt = new Drivetrain({ ...base, limiter: { style: 'hard', cutMs: 100 } });
+    const { cuts } = revNeutral(dt);
+    expect(cuts).toBeGreaterThan(1);
+    // 100 ms at 120 fps ≈ 12 frames of cut per bounce
+    dt.rpm = 6100; dt._limiterTimer = 0;
+    let frames = 0;
+    dt.update(1 / 120, 1);
+    while (dt.revLimiterActive && frames < 100) { dt.update(1 / 120, 1); frames++; }
+    expect(frames).toBeGreaterThanOrEqual(10);
+    expect(frames).toBeLessThanOrEqual(13);
+  });
+
+  it('soft limiter tapers torque before redline', () => {
+    const dt = new Drivetrain({ ...base, limiter: { style: 'soft', cutMs: 80, softRangeRPM: 300 } });
+    const hard = new Drivetrain({ ...base, limiter: { style: 'hard', cutMs: 80 } });
+    expect(dt._throttleTorque(5900, 1)).toBeLessThan(hard._throttleTorque(5900, 1));
+    expect(dt._throttleTorque(5000, 1)).toBe(hard._throttleTorque(5000, 1));
+    expect(dt.getState().limiterStyle).toBe('soft');
+  });
+
+  it('no limiter never cuts; breathing falloff caps RPM', () => {
+    const dt = new Drivetrain({ ...base, limiter: { style: 'none' } });
+    const { maxRPM, cuts } = revNeutral(dt, 1200);
+    expect(cuts).toBe(0);
+    expect(maxRPM).toBeGreaterThan(6000);
+    expect(maxRPM).toBeLessThan(7200);
+  });
+});

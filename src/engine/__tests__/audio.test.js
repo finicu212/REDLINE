@@ -665,3 +665,45 @@ describe('EngineAudio — multi-sample bank mode', () => {
     for (const g of ea._bankOnGains) expect(Number.isFinite(g.gain.value)).toBe(true);
   });
 });
+
+describe('EngineAudio — road-car layers', () => {
+  const road = {
+    idleRPM: 800, redlineRPM: 6000, cylinders: 6, turbo: false, finalDrive: 3.7, tireCircumference: 2.1,
+    audio: {
+      bank: [{ rpm: 1000, file: '/audio/t/1.wav' }, { rpm: 4000, file: '/audio/t/4.wav' }],
+      rev: null, limiter: null, trany: null, tranyDecel: null, gearHum: true,
+    },
+  };
+  let ea;
+  beforeEach(async () => {
+    vi.stubGlobal('AudioContext', MockAudioContext);
+    vi.stubGlobal('fetch', mockFetch());
+    ea = new EngineAudio(road);
+    await ea.init();
+    ea.start();
+  });
+  const st = (o) => ({ rpm: 3000, throttle: 1, gear: 3, speed: 90, shifting: false, revLimiterActive: false, ...o });
+
+  it('loads no whine, decel or limiter samples', () => {
+    const files = [...ea.buffers.keys()];
+    expect(files.some(f => /trany|tw_off|limiter/.test(f))).toBe(false);
+  });
+
+  it('plays a quiet gear hum pitched by road speed', () => {
+    ea.setEngineState(st({ speed: 60 }));
+    const f60 = ea._humOsc.frequency.value;
+    ea.setEngineState(st({ speed: 120 }));
+    expect(ea._humOsc.frequency.value).toBeCloseTo(f60 * 2, 0);
+    expect(ea._humGain.gain.value).toBeLessThan(0.03);
+    expect(ea._tranySource).toBeNull();
+  });
+
+  it('soft limiter only dips on-throttle gain, hard limiter cuts it', () => {
+    ea.setEngineState(st({ revLimiterActive: true, limiterStyle: 'soft' }));
+    const soft = ea._bankOnGains.reduce((a, g) => a + g.gain.value, 0);
+    ea.setEngineState(st({ revLimiterActive: true, limiterStyle: 'hard' }));
+    const hard = ea._bankOnGains.reduce((a, g) => a + g.gain.value, 0);
+    expect(soft).toBeGreaterThan(0.2);
+    expect(hard).toBeCloseTo(0, 5);
+  });
+});

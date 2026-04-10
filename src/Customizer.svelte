@@ -54,6 +54,9 @@
       >
         <div class="card-name">{profile.name}</div>
         <div class="card-desc">{profile.description}</div>
+        {#if profile.vehicle}
+          <div class="card-desc">{profile.vehicle}</div>
+        {/if}
         <div class="card-stats">
           <span>{peakHP(profile)} HP</span>
           <span>{pt.nm} Nm</span>
