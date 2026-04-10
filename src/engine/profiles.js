@@ -49,6 +49,32 @@ function profileAudio(folder) {
   };
 }
 
+/**
+ * Multi-sample bank: one loop per recorded RPM, pitched physically and
+ * crossfaded by audio.js. Files live in /audio/<folder>/<rpm>.wav.
+ * Transmission/limiter layers reuse the shared BAC files; REV.wav is BAC-specific, so off.
+ */
+function bankAudio(folder, rpms) {
+  const shared = bacAudio();
+  return {
+    bank: rpms.map(rpm => ({ rpm, file: `/audio/${folder}/${rpm}.wav` })),
+    rev: null,
+    limiter: shared.limiter,
+    trany: shared.trany,
+    tranyDecel: shared.tranyDecel,
+  };
+}
+
+const THOUSANDS = n => Array.from({ length: n }, (_, i) => (i + 1) * 1000);
+
+/**
+ * Sound candidates per engine type. Physics comes from the base profile;
+ * only id/name/audio/sound credit differ. Pick-and-keep list — see public/audio/CREDITS.md.
+ */
+function soundVariant(base, id, name, sound, audio) {
+  return { ...base, id, name, sound, audio };
+}
+
 // --- Profiles ---
 
 /**
@@ -262,18 +288,43 @@ const V8_NA = {
   audio: profileAudio('v8_na'),
 };
 
+// --- Sound candidates ---
+
+const ENGINE_SIM = 'engine-sim recording (Stunt Rally 3, CC-BY-4.0)';
+
+const I4_1 = soundVariant(I4_NA, 'i4_1', 'I4 #1', `4-cyl, ${ENGINE_SIM}`,
+  bankAudio('i4_tsu', THOUSANDS(8)));
+const I4_2 = soundVariant(I4_NA, 'i4_2', 'I4 #2', 'Toyota 4A-GE, real (Freesound, CC0/CC-BY)',
+  bankAudio('i4_4age', [2170, 4050]));
+const I4_3 = soundVariant(I4_NA, 'i4_3', 'I4 #3', 'Opel Astra 1.6 16V, real (Freesound, CC-BY)',
+  bankAudio('i4_astra', [1300]));
+
+const V6_1 = soundVariant(V6_NA, 'v6_1', 'V6 #1', `even-fire 6-cyl, ${ENGINE_SIM}`,
+  bankAudio('v6_tsp', THOUSANDS(8)));
+const V6_2 = soundVariant(V6_NA, 'v6_2', 'V6 #2', 'DeLorean PRV V6, real (Freesound, CC-BY)',
+  bankAudio('v6_delorean', [944, 1600]));
+
+const V8_1 = soundVariant(V8_NA, 'v8_1', 'V8 #1', `cross-plane V8, ${ENGINE_SIM}`,
+  bankAudio('v8_gv8', THOUSANDS(7)));
+const V8_2 = soundVariant(V8_NA, 'v8_2', 'V8 #2', `cross-plane V8, ${ENGINE_SIM}`,
+  bankAudio('v8_ctv8', THOUSANDS(7)));
+const V8_3 = soundVariant(V8_NA, 'v8_3', 'V8 #3', `flat-plane V8, ${ENGINE_SIM}`,
+  bankAudio('v8_v8f', THOUSANDS(8)));
+const V8_4 = soundVariant(V8_NA, 'v8_4', 'V8 #4', 'Olds 350 Rocket idle, real (Freesound, CC0)',
+  bankAudio('v8_rocket', [515]));
+
 // --- Exports ---
 
-/** All user-selectable profiles, keyed by id */
-export const PROFILES = {
-  i4_na: I4_NA,
-  i4_turbo: I4_TURBO,
-  v6_na: V6_NA,
-  v8_na: V8_NA,
-};
-
 /** Profile list for UI iteration (stable order) */
-export const PROFILE_LIST = [I4_NA, I4_TURBO, V6_NA, V8_NA];
+export const PROFILE_LIST = [
+  I4_NA, I4_1, I4_2, I4_3,
+  I4_TURBO,
+  V6_1, V6_2,
+  V8_1, V8_2, V8_3, V8_4,
+];
+
+/** All user-selectable profiles, keyed by id */
+export const PROFILES = Object.fromEntries(PROFILE_LIST.map(p => [p.id, p]));
 
 /** Default profile used when no profile is passed (backward compat) */
 export const DEFAULT_PROFILE = I4_NA;

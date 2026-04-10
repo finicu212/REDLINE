@@ -63,6 +63,9 @@
           <span>{profile.cylinders}cyl {profile.layout === 'v' ? 'V' : 'I'}</span>
           <span>Redline {profile.redlineRPM}</span>
         </div>
+        {#if profile.sound}
+          <div class="card-sound">{profile.sound}</div>
+        {/if}
       </button>
     {/each}
   </div>
@@ -107,7 +110,7 @@
     gap: 0.75rem;
     flex-wrap: wrap;
     justify-content: center;
-    max-width: 700px;
+    max-width: 900px;
   }
 
   .profile-card {
@@ -164,6 +167,12 @@
     color: var(--c-text-ghost);
     text-transform: uppercase;
     letter-spacing: 0.08em;
+  }
+
+  .card-sound {
+    font-size: 0.55rem;
+    color: var(--c-text-subtle);
+    line-height: 1.3;
   }
 
   .start-btn {

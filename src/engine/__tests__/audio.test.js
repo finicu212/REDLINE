@@ -75,6 +75,10 @@ function MockAudioContext() {
   this.createBufferSource = vi.fn(() => createMockSource());
   this.createOscillator = vi.fn(() => createMockOscillator());
   this.createConvolver = vi.fn(() => createMockConvolver());
+  this.createBiquadFilter = vi.fn(() => ({
+    type: 'lowpass', Q: createMockAudioParam(1), frequency: createMockAudioParam(350),
+    connect: vi.fn(), disconnect: vi.fn(),
+  }));
   this.createBuffer = vi.fn((channels, length, sampleRate) => createMockAudioBuffer(channels, length, sampleRate));
   this.decodeAudioData = vi.fn(async () => ({ duration: 1.0, length: 44100 }));
 }
@@ -583,5 +587,81 @@ describe('EngineAudio — per-cylinder micro-variation', () => {
     for (const g of ea._cylGainOffsets) {
       expect(Math.abs(g)).toBeLessThanOrEqual(0.03);
     }
+  });
+});
+
+describe('EngineAudio — multi-sample bank mode', () => {
+  const bankProfile = {
+    idleRPM: 800, redlineRPM: 6000, cylinders: 8, turbo: false,
+    audio: {
+      bank: [
+        { rpm: 1000, file: '/audio/test/1.wav' },
+        { rpm: 2000, file: '/audio/test/2.wav' },
+        { rpm: 4000, file: '/audio/test/4.wav' },
+      ],
+      rev: null,
+      limiter: '/audio/limiter.wav',
+      trany: '/audio/trany_power_high.wav',
+    },
+  };
+  let ea;
+  beforeEach(async () => {
+    vi.stubGlobal('AudioContext', MockAudioContext);
+    vi.stubGlobal('fetch', mockFetch());
+    ea = new EngineAudio(bankProfile);
+    await ea.init();
+    ea.start();
+  });
+
+  const state = (rpm, throttle = 1) => ({
+    rpm, throttle, gear: 1, speed: 30, shifting: false, revLimiterActive: false,
+  });
+
+  it('loads bank files and skips null rev', async () => {
+    const files = [...ea.buffers.keys()];
+    expect(files).toContain('/audio/test/1.wav');
+    expect(files).toContain('/audio/test/4.wav');
+    expect(files).not.toContain(null);
+    expect(files.some(f => f && f.includes('BAC_Mono'))).toBe(false);
+  });
+
+  it('creates one source per bank sample', () => {
+    expect(ea._bankSources).toHaveLength(3);
+  });
+
+  it('pitches each sample physically relative to its recorded RPM', () => {
+    ea.setEngineState(state(3000));
+    // 3000 vs 2000 recorded = 1.5x = 702 cents (± per-cylinder micro-detune)
+    expect(ea._bankSources[1].detune.value).toBeCloseTo(1200 * Math.log2(1.5), -1);
+    expect(ea._bankSources[2].detune.value).toBeCloseTo(1200 * Math.log2(0.75), -1);
+  });
+
+  it('crossfades only the two nearest samples (equal power)', () => {
+    ea.setEngineState(state(3000));
+    const g = ea._bankOnGains.map(n => n.gain.value);
+    expect(g[0]).toBeCloseTo(0, 5);
+    expect(g[1]).toBeGreaterThan(0);
+    expect(g[2]).toBeGreaterThan(0);
+    expect(g[1] ** 2 + g[2] ** 2).toBeCloseTo(1, 1);
+  });
+
+  it('holds the edge sample below the lowest / above the highest RPM', () => {
+    ea.setEngineState(state(800));
+    expect(ea._bankOnGains[0].gain.value).toBeGreaterThan(0.9);
+    ea.setEngineState(state(5500));
+    expect(ea._bankOnGains[2].gain.value).toBeGreaterThan(0.9);
+    expect(ea._bankOnGains[1].gain.value).toBeCloseTo(0, 5);
+  });
+
+  it('off-throttle moves energy to the filtered off path', () => {
+    ea.setEngineState(state(2000, 0));
+    expect(ea._bankOnGains[1].gain.value).toBeCloseTo(0, 5);
+    expect(ea._bankOffGains[1].gain.value).toBeGreaterThan(0);
+  });
+
+  it('never sends non-finite values to AudioParams', () => {
+    ea.setEngineState(state(NaN));
+    for (const src of ea._bankSources) expect(Number.isFinite(src.detune.value)).toBe(true);
+    for (const g of ea._bankOnGains) expect(Number.isFinite(g.gain.value)).toBe(true);
   });
 });

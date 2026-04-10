@@ -62,6 +62,11 @@ const DEFAULT_TURBO_BOV_FILE = '/audio/turbo_bov.wav';
 const RPM_XFADE_LOW = 3000;
 const RPM_XFADE_HIGH = 6500;
 
+// Bank mode off-throttle path: quieter, lowpassed, opening up with RPM
+const BANK_OFF_LEVEL = 0.55;
+const BANK_OFF_CUTOFF_BASE = 400;     // Hz
+const BANK_OFF_CUTOFF_PER_RPM = 0.35; // Hz per RPM → ~2.5 kHz at 6000
+
 // REV.wav blend zone (normalized RPM)
 const REV_BLEND_START = 0.995;
 const REV_BLEND_END = 0.999;
@@ -82,6 +87,19 @@ function buildFileConfig(profile) {
     };
   }
   const a = profile.audio;
+  if (a.bank) {
+    return {
+      bank: a.bank,
+      engineSamples: {},
+      engineExtraOff: {},
+      tranyDecel: a.tranyDecel || DEFAULT_TRANY_DECEL,
+      revFile: a.rev === undefined ? DEFAULT_REV_FILE : a.rev,
+      limiterFile: a.limiter || DEFAULT_LIMITER_FILE,
+      tranyFile: a.trany || DEFAULT_TRANY_FILE,
+      turboWhineFile: a.turboWhine || DEFAULT_TURBO_WHINE_FILE,
+      turboBovFile: a.turboBov || DEFAULT_TURBO_BOV_FILE,
+    };
+  }
   return {
     engineSamples: {
       on_low:  a.on_low,
@@ -104,6 +122,7 @@ function buildFileConfig(profile) {
 
 function buildAllFiles(fc, hasTurbo = true) {
   const files = [
+    ...(fc.bank || []).map(({ file }) => ({ file })),
     ...Object.values(fc.engineSamples).map(file => ({ file })),
     ...Object.values(fc.engineExtraOff).map(file => ({ file })),
     ...fc.tranyDecel,
@@ -114,7 +133,7 @@ function buildAllFiles(fc, hasTurbo = true) {
   if (hasTurbo) {
     files.push({ file: fc.turboWhineFile }, { file: fc.turboBovFile });
   }
-  return files;
+  return files.filter(entry => entry.file);
 }
 
 // --- Exhaust IR generator ---
@@ -162,6 +181,29 @@ function crossFade(value, start, end) {
   };
 }
 
+/**
+ * Bank crossfade weights: equal-power blend of the two samples whose recorded
+ * RPMs bracket `rpm`; edge samples hold outside the bank's range.
+ */
+export function bankWeights(bankRPMs, rpm) {
+  const w = new Array(bankRPMs.length).fill(0);
+  if (!(rpm > bankRPMs[0])) { w[0] = 1; return w; }
+  const last = bankRPMs.length - 1;
+  if (rpm >= bankRPMs[last]) { w[last] = 1; return w; }
+  let i = 0;
+  while (rpm > bankRPMs[i + 1]) i++;
+  const x = (rpm - bankRPMs[i]) / (bankRPMs[i + 1] - bankRPMs[i]);
+  w[i] = Math.cos(x * Math.PI / 2);
+  w[i + 1] = Math.sin(x * Math.PI / 2);
+  return w;
+}
+
+// Bank samples are recorded at their true RPM, so pitch is physical (ratio in cents).
+// Clamped at ±4 octaves: single-sample banks stretch that far, anything beyond is inaudible anyway.
+function bankDetune(rpm, sampleRPM) {
+  return Math.max(-4800, Math.min(4800, 1200 * Math.log2(rpm / sampleRPM)));
+}
+
 /** Convert RPM to detune cents: (rpm - 1000) * 0.2 */
 function rpmToDetune(rpm) {
   return (rpm - SAMPLE_RPM) * RPM_PITCH_FACTOR;
@@ -192,6 +234,13 @@ export class EngineAudio {
     this._pipeLength = p?.exhaust?.pipeLength ?? 1.5;
     this._pipeDiameter = p?.exhaust?.diameter ?? 0.08;
     this._exhaustWet = p?.exhaust?.wet ?? 0.3;
+
+    // Bank mode (profile.audio.bank): N samples recorded at known RPMs
+    this._bank = this._fileConfig.bank || null;
+    this._bankSources = [];
+    this._bankOnGains = [];
+    this._bankOffGains = [];
+    this._bankOffFilter = null;
 
     // Core engine: 4 simultaneous sources
     this._engineSources = {};
@@ -317,8 +366,10 @@ export class EngineAudio {
       this._startAllEngineSources();
     }
 
-    const { rpm, throttle, gear, speed, shifting, revLimiterActive,
+    const { throttle, gear, speed, shifting, revLimiterActive,
             shiftOscillation = 0, shiftOscAmplitude = 0, shiftOscRPMDelta = 0 } = state;
+    // Non-finite values throw inside AudioParam.setTargetAtTime and would kill the render loop
+    const rpm = Number.isFinite(state.rpm) ? state.rpm : this._idleRPM;
     const pitchRPM = Math.max(this._idleRPM, rpm);  // pitch follows actual RPM past redline
     const nRPM = this._normalizeRPM(Math.min(rpm, this._redlineRPM)); // gain crossfade stays in normal range
     const now = this.ctx.currentTime;
@@ -375,6 +426,11 @@ export class EngineAudio {
     const pitchedMix = Math.cos(revBlend * Math.PI / 2);
     const revMix = Math.sin(revBlend * Math.PI / 2);
 
+    if (this._bank) {
+      this._updateBank(pitchRPM, detuneWobble + microDetune, onGain * onVolume * pitchedMix * gainMod,
+        offGain * gainMod, 1.0 + microGain, now);
+    }
+
     const engineGainValues = {
       on_low:   onGain * onVolume * lowGain * pitchedMix * gainMod,
       on_high:  onGain * onVolume * highGain * pitchedMix * gainMod,
@@ -382,7 +438,9 @@ export class EngineAudio {
       off_high: offGain * highGain * gainMod,
     };
 
-    this.debugBandGains = { ...engineGainValues, rev: revMix };
+    this.debugBandGains = this._bank
+      ? { ...this._bankDebugGains, rev: revMix }
+      : { ...engineGainValues, rev: revMix };
 
     for (const key of Object.keys(engineGainValues)) {
       const g = this._engineGains[key];
@@ -450,6 +508,8 @@ export class EngineAudio {
     if (this._started) return;
     const now = this.ctx.currentTime;
     const fc = this._fileConfig;
+
+    if (this._bank) this._startBankSources(now);
 
     // Core 4 engine samples
     for (const [key, file] of Object.entries(fc.engineSamples)) {
@@ -524,6 +584,15 @@ export class EngineAudio {
         if (src) setTimeout(() => { try { src.stop(); } catch {} }, 300);
       }
     }
+    for (const g of [...this._bankOnGains, ...this._bankOffGains]) {
+      if (g) g.gain.setTargetAtTime(0, now, 0.033);
+    }
+    for (const src of this._bankSources) {
+      if (src) setTimeout(() => { try { src.stop(); } catch {} }, 300);
+    }
+    this._bankSources = [];
+    this._bankOnGains = [];
+    this._bankOffGains = [];
     this._engineSources = {};
     this._engineGains = {};
     this._extraOffSources = {};
@@ -531,6 +600,63 @@ export class EngineAudio {
     this._decelSources = {};
     this._decelGains = {};
     this._started = false;
+  }
+
+  // === Multi-sample bank ===
+
+  /**
+   * One looping source per bank sample, feeding two gains: dry on-throttle and a
+   * lowpassed off-throttle path (overrun is duller and quieter than combustion).
+   */
+  _startBankSources(now) {
+    this._bankOffFilter = this.ctx.createBiquadFilter();
+    this._bankOffFilter.type = 'lowpass';
+    this._bankOffFilter.Q.value = 0.7;
+    this._bankOffFilter.connect(this._engineBus);
+
+    for (const { file } of this._bank) {
+      const buf = this.buffers.get(file);
+      const source = buf ? this.ctx.createBufferSource() : null;
+      const onGain = this.ctx.createGain();
+      const offGain = this.ctx.createGain();
+      onGain.gain.value = 0;
+      offGain.gain.value = 0;
+      onGain.connect(this._engineBus);
+      offGain.connect(this._bankOffFilter);
+      if (source) {
+        source.buffer = buf;
+        source.loop = true;
+        source.connect(onGain);
+        source.connect(offGain);
+        // Random start offset so neighbouring loops don't phase-lock
+        source.start(now, Math.random() * (buf.duration || 0));
+      }
+      this._bankSources.push(source);
+      this._bankOnGains.push(onGain);
+      this._bankOffGains.push(offGain);
+    }
+  }
+
+  _updateBank(rpm, extraDetune, onLevel, offLevel, micro, now) {
+    const weights = bankWeights(this._bank.map(b => b.rpm), rpm);
+    const debug = {};
+    let loudest = 0;
+    this._bank.forEach((entry, i) => {
+      const src = this._bankSources[i];
+      const detune = bankDetune(rpm, entry.rpm) + extraDetune;
+      if (src) src.detune.setTargetAtTime(detune, now, 0.015);
+      if (weights[i] > loudest) { loudest = weights[i]; this.debugDetune = detune; }
+      const vol = entry.volume ?? 1;
+      const on = weights[i] * onLevel * vol * micro;
+      const off = weights[i] * offLevel * vol * BANK_OFF_LEVEL;
+      this._bankOnGains[i].gain.setTargetAtTime(on, now, 0.05);
+      this._bankOffGains[i].gain.setTargetAtTime(off, now, 0.05);
+      debug[`${entry.rpm}`] = on + off;
+    });
+    if (this._bankOffFilter) {
+      this._bankOffFilter.frequency.setTargetAtTime(BANK_OFF_CUTOFF_BASE + rpm * BANK_OFF_CUTOFF_PER_RPM, now, 0.05);
+    }
+    this._bankDebugGains = debug;
   }
 
   // === Transmission decel layers ===

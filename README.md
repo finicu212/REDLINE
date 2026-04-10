@@ -11,6 +11,7 @@ Browser-based engine simulator with realistic drivetrain physics, layered audio 
 - **Spring-damper clutch engagement** — replaces instant RPM snap with torsional spring-damper coupling engine and wheel inertias. Oscillation frequency and damping emerge from physics per gear.
 - **Turbocharger** — BeamNG-style exhaust energy model with spool lag, wastegate, compressor back-pressure, and blow-off valve. Boost adds torque proportional to manifold pressure.
 - **13-layer engine audio** — Web Audio API with frequency-band samples (low/mid/high) crossfading by RPM and throttle. Separate on/off-throttle sample sets, REV redline loop, limiter gated loop, transmission whine, 4-band decel layers, and synthesized shift thuds.
+- **Multi-sample engine banks** — profiles can ship one loop per recorded RPM (`profile.audio.bank`); audio pitches each physically (`1200·log2(rpm/recorded)` cents) and equal-power crossfades the two nearest. Off-throttle reuses the bank through an RPM-tracking lowpass. Sound candidates per engine type (`I4 #1..3`, `V6 #1..2`, `V8 #1..4`) — sources and licenses in `public/audio/CREDITS.md`.
 - **Exhaust convolution reverb** — procedurally generated impulse response from pipe geometry via ConvolverNode. Equal-power dry/wet crossfade.
 - **Per-cylinder variation** — subtle timing jitter (±8%) and brightness/detune offsets per cylinder break mechanical perfection in both audio and visuals.
 - **Idle realism** — idle air control holds RPM near 850, per-cylinder firing pulses add ±15 RPM flutter at ~14 Hz. Not a perfect flat line.
@@ -46,7 +47,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`. Choose cylinder count and layout, then **START ENGINE**.
+Open `http://localhost:5173`. Pick an engine / sound variant, then **START ENGINE**.
 
 ## Tech Stack
 

@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { PROFILES, PROFILE_LIST, DEFAULT_PROFILE, getProfile } from '../profiles.js';
+
+const PUBLIC_DIR = join(import.meta.dirname, '../../../public');
 
 const REQUIRED_FIELDS = [
   'id', 'name', 'description', 'cylinders', 'layout',
@@ -13,6 +17,22 @@ const REQUIRED_AUDIO_KEYS = [
   'on_low', 'on_high', 'off_low', 'off_high',
   'off_mid', 'off_veryhigh', 'rev', 'limiter', 'trany', 'tranyDecel',
 ];
+
+describe('Engine profiles — sound candidates', () => {
+  it('offers several sound variants per engine type', () => {
+    const count = prefix => PROFILE_LIST.filter(p => p.id.startsWith(prefix)).length;
+    expect(count('i4_')).toBeGreaterThanOrEqual(3);
+    expect(count('v6_')).toBeGreaterThanOrEqual(2);
+    expect(count('v8_')).toBeGreaterThanOrEqual(2);
+  });
+
+  it('variants share physics with their engine type', () => {
+    expect(PROFILES.v8_1.cylinders).toBe(8);
+    expect(PROFILES.v8_1.torqueCurve).toBe(PROFILES.v8_2.torqueCurve);
+    expect(PROFILES.v6_1.cylinders).toBe(6);
+    expect(PROFILES.i4_1.cylinders).toBe(4);
+  });
+});
 
 describe('Engine profiles — structure', () => {
   it('PROFILE_LIST has at least 3 profiles', () => {
@@ -49,11 +69,26 @@ describe('Engine profiles — field validation', () => {
         }
       });
 
-      it('has all required audio keys', () => {
-        for (const key of REQUIRED_AUDIO_KEYS) {
-          expect(profile.audio).toHaveProperty(key);
-        }
-      });
+      if (profile.audio.bank) {
+        it('bank RPMs are ascending and every file exists', () => {
+          const rpms = profile.audio.bank.map(b => b.rpm);
+          expect(rpms.length).toBeGreaterThan(0);
+          for (let i = 1; i < rpms.length; i++) expect(rpms[i]).toBeGreaterThan(rpms[i - 1]);
+          for (const { file } of profile.audio.bank) {
+            expect(existsSync(join(PUBLIC_DIR, file)), file).toBe(true);
+          }
+        });
+
+        it('credits its sound source', () => {
+          expect(typeof profile.sound).toBe('string');
+        });
+      } else {
+        it('has all required audio keys', () => {
+          for (const key of REQUIRED_AUDIO_KEYS) {
+            expect(profile.audio).toHaveProperty(key);
+          }
+        });
+      }
 
       it('audio.tranyDecel has 4 entries', () => {
         expect(profile.audio.tranyDecel).toHaveLength(4);

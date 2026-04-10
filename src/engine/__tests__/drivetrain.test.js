@@ -555,18 +555,21 @@ describe('Drivetrain — NaN safety', () => {
     const { PROFILE_LIST } = await import('../profiles.js');
     let seed = 12345;
     const rand = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
-    for (const profile of PROFILE_LIST) {
+    // Sound variants share physics — fuzz each distinct drivetrain once
+    const physics = [...new Map(PROFILE_LIST.map(p => [p.torqueCurve, p])).values()];
+    for (const profile of physics) {
       for (const frame of [1 / 144, 1 / 60, 1 / 30, 0.05]) {
         const dt = new Drivetrain(profile);
+        let firstBad = -1;
         for (let i = 0; i < 3000; i++) {
           const r = rand();
           if (r < 0.03) dt.shiftUp();
           else if (r < 0.06) dt.shiftDown();
           if (rand() < 0.02) dt.clutchHeld = !dt.clutchHeld;
           dt.update(frame, rand() < 0.8 ? 1 : 0, rand() < 0.02);
-          expect(Number.isFinite(dt.rpm)).toBe(true);
-          expect(Number.isFinite(dt.speed)).toBe(true);
+          if (firstBad < 0 && !(Number.isFinite(dt.rpm) && Number.isFinite(dt.speed))) firstBad = i;
         }
+        expect(firstBad, `${profile.id} @ ${frame}`).toBe(-1);
         expect(dt.nanRecoveries).toBe(0); // root cause fixed — guard never needed
       }
     }
