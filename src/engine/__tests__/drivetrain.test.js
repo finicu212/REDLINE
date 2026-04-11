@@ -679,3 +679,22 @@ describe('Drivetrain — diesel turbo', () => {
     expect(dt._bovActive).toBe(false);
   });
 });
+
+describe('Drivetrain — dangerous shifts', () => {
+  it('money shift at top speed is allowed and over-revs without tripping the NaN guard', async () => {
+    const { PROFILES } = await import('../profiles.js');
+    const p = PROFILES.v8_3;
+    const dt = new Drivetrain(p);
+    for (let g = 0; g < 7; g++) dt.shiftUp();
+    const ratio = p.gearRatios[7] * p.finalDrive;
+    dt.rpm = 9500;
+    dt.speed = (9500 / ratio) * p.tireCircumference / 60 * 3.6;
+    for (let g = 0; g < 6; g++) expect(dt.shiftDown()).toBe(true);
+    expect(dt.gear).toBe(1);
+    let peak = 0;
+    for (let i = 0; i < 120; i++) { dt.update(1 / 60, 0); peak = Math.max(peak, dt.rpm); }
+    expect(peak).toBeGreaterThan(p.redlineRPM * 2);
+    expect(Number.isFinite(dt.rpm)).toBe(true);
+    expect(dt.nanRecoveries).toBe(0);
+  });
+});

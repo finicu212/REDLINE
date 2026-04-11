@@ -177,6 +177,7 @@ const I4_3 = {
  * Nissan 370Z — VQ37VHR 3.7L 60° V6
  * 332 hp @ 7000, 366 Nm @ 5200, redline 7500. 6-speed manual, 3.692 final.
  * Sound source is an unidentified engine-sim even-fire 6; physics are the VQ37.
+ * Redline raised 7500 → 8000 to use the full recorded bank (top band 8000).
  */
 const V6_1 = {
   id: 'v6_1',
@@ -189,9 +190,9 @@ const V6_1 = {
   layout: 'v',
 
   idleRPM: 700,
-  redlineRPM: 7500,
-  revCutRPM: 7400,
-  maxRPM: 7700,
+  redlineRPM: 8000,
+  revCutRPM: 7900,
+  maxRPM: 8200,
   tachoMaxRPM: 9000,
   limiter: { style: 'hard', cutMs: 80 },
 
@@ -334,6 +335,7 @@ const V8_1 = {
  * Chevrolet Chevelle SS 454 (1970) — LS6 7.4L big-block V8 (engine-sim "Chev. 454")
  * 450 hp (gross) @ 5600, 678 Nm @ 3600. Points ignition, no cut — soft hold at redline.
  * Muncie M22 4-speed, 3.73 final.
+ * Redline raised 6000 → 7000 to use the full recorded bank (top band 7000).
  */
 const V8_2 = {
   id: 'v8_2',
@@ -346,9 +348,9 @@ const V8_2 = {
   layout: 'v',
 
   idleRPM: 750,
-  redlineRPM: 6000,
-  revCutRPM: 5900,
-  maxRPM: 6800,
+  redlineRPM: 7000,
+  revCutRPM: 6900,
+  maxRPM: 7200,
   tachoMaxRPM: 8000,
   limiter: { style: 'soft', cutMs: 0, softRangeRPM: 400 },
 
@@ -362,6 +364,7 @@ const V8_2 = {
     [5600, 572],
     [6000, 510],
     [6500, 430],
+    [7000, 360],
   ],
 
   gearRatios: [0, 2.20, 1.64, 1.28, 1.00],
@@ -386,6 +389,7 @@ const V8_2 = {
 /**
  * Ferrari 458 Italia — F136 FB 4.5L flat-plane V8 (engine-sim "Ferrari F136")
  * 570 PS @ 9000, 540 Nm @ 6000, redline 9000. 7-speed DCT, 4.44 final.
+ * Redline raised 9000 → 10000 to use the full recorded bank (top band 10000).
  */
 const V8_3 = {
   id: 'v8_3',
@@ -398,10 +402,10 @@ const V8_3 = {
   layout: 'v',
 
   idleRPM: 1000,
-  redlineRPM: 9000,
-  revCutRPM: 8900,
-  maxRPM: 9200,
-  tachoMaxRPM: 10000,
+  redlineRPM: 10000,
+  revCutRPM: 9900,
+  maxRPM: 10200,
+  tachoMaxRPM: 11000,
   limiter: { style: 'hard', cutMs: 50 },
 
   torqueCurve: [
@@ -415,6 +419,7 @@ const V8_3 = {
     [8000, 500],
     [9000, 445],
     [9400, 400],
+    [10000, 360],
   ],
 
   gearRatios: [0, 3.08, 2.19, 1.63, 1.29, 1.03, 0.84, 0.69],

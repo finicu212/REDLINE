@@ -310,20 +310,11 @@ export class Drivetrain {
     return true;
   }
 
-  /** Shift down. Works with or without clutch. Over-rev protection included. */
+  /** Shift down. Works with or without clutch. No over-rev protection: money shifts are allowed. */
   shiftDown() {
     if (this.gear <= 0) return false;
 
     const newGear = this.gear - 1;
-
-    // Over-rev protection
-    if (newGear > 0 && this.speed > 0) {
-      const newTotalRatio = this._gearRatios[newGear] * this._finalDrive;
-      const wheelRPS = (this.speed / 3.6) / this._tireCircumference;
-      const projectedRPM = wheelRPS * 60 * newTotalRatio;
-      if (projectedRPM > this._maxRPM) return false;
-    }
-
     const hadClutch = this.clutchHeld;
     this.gear = newGear;
     if (!hadClutch && this.gear > 0 && this.speed > 0) this._engageClutch();
@@ -401,7 +392,8 @@ export class Drivetrain {
   _guardFinite() {
     // Finite-but-absurd values (diverging integrator) are caught too, before they overflow
     const sane = (x, limit) => Number.isFinite(x) && Math.abs(x) < limit;
-    const rpmLimit = this._maxRPM * 4;
+    // Wide enough for a 7th→1st money shift at top speed (~4.5× redline)
+    const rpmLimit = this._maxRPM * 8;
     const ok = sane(this.rpm, rpmLimit) && sane(this.speed, SANE_SPEED_KMH)
       && sane(this._wheelOmega, rpmLimit * RPM_TO_RADS) && sane(this._clutchAngleDelta, 1e4)
       && sane(this.boostPsi, 1e3) && sane(this._turboShaftRPS, 1e6);

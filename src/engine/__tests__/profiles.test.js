@@ -170,3 +170,12 @@ describe('Engine profiles — field validation', () => {
     });
   }
 });
+
+describe('Engine profiles — redline uses the recorded audio', () => {
+  it('no recorded band sits above redline (redline uses the full bank)', () => {
+    for (const p of PROFILE_LIST.filter(p => p.audio.bank)) {
+      const top = Math.max(...p.audio.bank.map(b => b.rpm));
+      expect(top, p.id).toBeLessThanOrEqual(p.redlineRPM);
+    }
+  });
+});

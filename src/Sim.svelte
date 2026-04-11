@@ -17,6 +17,11 @@
   let mouseThrottle = $state(0);  // throttle from mouse Y position
   let clickOriginY = 0;           // Y position at mousedown (0% throttle anchor)
   const THROTTLE_DRAG_PX = 120;   // pixels of upward drag for 100% throttle
+  // In neutral an on/off key would slam the limiter; cap it (analog inputs keep full range)
+  const NEUTRAL_DISCRETE_THROTTLE = 0.35;
+  const NEUTRAL_HINT_MS = 3000;   // idle in neutral this long → show shift controls
+  let neutralSince = performance.now();
+  let neutralIdle = $state(false);
   let spaceHeld = $state(false);
   let braking = $state(false);
   let clutchHeld = $state(false);
@@ -85,6 +90,7 @@
   }
 
   function onMouseDown(e) {
+    if (e.target.closest?.('.shift-hint')) return;
     mouseHeld = true;
     clickOriginY = e.clientY;
     mouseThrottle = 0;
@@ -108,7 +114,7 @@
   // Drag UP from touch origin = throttle 0→1 over TOUCH_THROTTLE_PX (mirrors mouse drag)
 
   function onTouchStart(e) {
-    if (e.target.closest('.touch-btn')) return;
+    if (e.target.closest('.touch-btn, .shift-hint')) return;
     e.preventDefault();
     showHint = false;
     isTouchDevice = true;
@@ -201,8 +207,9 @@
       pollGamepad();
 
       // Combine all input sources: take max throttle, OR brakes
+      const discreteThrottle = drivetrain.gear === 0 ? NEUTRAL_DISCRETE_THROTTLE : 1;
       throttle = Math.max(
-        spaceHeld ? 1 : 0,
+        spaceHeld ? discreteThrottle : 0,
         mouseHeld ? mouseThrottle : 0,
         touchThrottle,
         gamepadThrottle,
@@ -216,6 +223,9 @@
 
       const state = drivetrain.getState();
       state.throttle = throttle;
+
+      if (drivetrain.gear !== 0) neutralSince = now;
+      neutralIdle = now - neutralSince > NEUTRAL_HINT_MS;
 
       rpm = state.rpm;
       speed = state.speed;
@@ -309,7 +319,10 @@
       {#if showHint}
         <p class="hint">{isTouchDevice ? 'DRAG UP to rev' : 'SPACE / DRAG UP to rev'}</p>
       {/if}
-      <GearIndicator gear={gearLabel} {speed} clutchHeld={drivetrain.clutchHeld} />
+      <GearIndicator gear={gearLabel} {speed} clutchHeld={drivetrain.clutchHeld}
+        showShift={neutralIdle}
+        onshiftup={() => drivetrain.shiftUp()}
+        onshiftdown={() => drivetrain.shiftDown()} />
     </div>
 
     <button class="info-btn" onclick={() => showControls = !showControls}>CONTROLS</button>
@@ -320,7 +333,7 @@
           <div class="controls-title">CONTROLS</div>
           <div class="controls-section">
             <div class="controls-heading">Keyboard + Mouse</div>
-            <div class="controls-row"><span class="controls-key">SPACE</span> Full throttle</div>
+            <div class="controls-row"><span class="controls-key">SPACE</span> Full throttle (35% in neutral)</div>
             <div class="controls-row"><span class="controls-key">CLICK+DRAG UP</span> Proportional throttle</div>
             <div class="controls-row"><span class="controls-key">SHIFT / C</span> Clutch (hold to shift)</div>
             <div class="controls-row"><span class="controls-key">{'\u2191'} {'\u2193'}</span> Shift up / down</div>

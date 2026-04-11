@@ -27,11 +27,12 @@ Browser-based engine simulator with realistic drivetrain physics, layered audio 
 
 | Input | Action |
 |---|---|
-| **Space** | Full throttle (WOT) |
+| **Space** | Full throttle (WOT); 35% in neutral |
 | **Click + drag up** | Proportional throttle (mouse Y) |
 | **Touch drag up** | Proportional throttle |
 | **Shift / C** | Clutch (hold to decouple, shift, release to engage) |
-| **Arrow Up / Down** | Shift up / down (works with or without clutch) |
+| **Arrow Up / Down** | Shift up / down (works with or without clutch; no over-rev protection — money shifts allowed) |
+| **▲ / ▼ by gear** | Appears after ~3 s idle in neutral; click to shift |
 | **S** or **B** | Brake |
 | **Backtick (`)** | Toggle debug overlay |
 | **Gamepad RT / LT** | Throttle / brake |
