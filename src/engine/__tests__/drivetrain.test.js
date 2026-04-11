@@ -619,6 +619,16 @@ describe('Drivetrain — limiter styles', () => {
     expect(cuts).toBeGreaterThan(5); // audible bounce: several cuts per 2 s
   });
 
+  it('I4 NA (GT4-style) stutters tightly on the limiter', async () => {
+    const { PROFILES } = await import('../profiles.js');
+    const dt = new Drivetrain(PROFILES.i4_na);
+    for (let i = 0; i < 360; i++) dt.update(1 / 60, 1);
+    let lo = Infinity, hi = 0;
+    for (let i = 0; i < 120; i++) { dt.update(1 / 60, 1); lo = Math.min(lo, dt.rpm); hi = Math.max(hi, dt.rpm); }
+    expect(hi - lo).toBeLessThan(200);
+    expect(lo).toBeGreaterThan(PROFILES.i4_na.redlineRPM - 150);
+  });
+
   it('soft limiter tapers torque before redline', () => {
     const dt = new Drivetrain({ ...base, limiter: { style: 'soft', cutMs: 80, softRangeRPM: 300 } });
     const hard = new Drivetrain({ ...base, limiter: { style: 'hard', cutMs: 80 } });

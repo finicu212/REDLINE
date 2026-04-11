@@ -748,3 +748,22 @@ describe('EngineAudio — limiter character', () => {
     expect(ea.debugPops).toBeUndefined();
   });
 });
+
+describe('EngineAudio — recorded limiter loop hold', () => {
+  it('keeps one limiter loop through rapid cuts, and never adds synthetic pops', async () => {
+    vi.stubGlobal('AudioContext', MockAudioContext);
+    vi.stubGlobal('fetch', mockFetch());
+    const ea = new EngineAudio();
+    await ea.init();
+    ea.start();
+    const st = (cut, t) => { ea.ctx.currentTime = t; ea.setEngineState({ rpm: 7200, throttle: 1, gear: 0, speed: 0,
+      shifting: false, revLimiterActive: cut, limiterStyle: 'hard' }); };
+    st(true, 0.00);
+    const first = ea._limiterSource;
+    for (let i = 1; i < 12; i++) st(i % 2 === 0, i * 0.025); // 20 Hz on/off
+    expect(ea._limiterSource).toBe(first);
+    expect(ea.debugPops).toBeUndefined();
+    st(false, 1.0); // well past the hold
+    expect(ea._limiterActive).toBe(false);
+  });
+});

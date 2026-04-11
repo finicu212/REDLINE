@@ -67,6 +67,9 @@ const LIMITER_HUNT_HZ = 7;
 const LIMITER_HUNT_DEPTH = 0.22;
 const LIMITER_HUNT_CENTS = 18;
 
+// Recorded limiter loop stays on this long after the last cut
+const LIMITER_LOOP_HOLD_S = 0.15;
+
 // Hard limiter pop: short bandpassed noise burst per fuel cut
 const LIMITER_POP_MS = 45;
 const LIMITER_POP_LEVEL = 0.35;
@@ -471,7 +474,9 @@ export class EngineAudio {
     }
 
     // Hard limiter: exhaust pop on every fuel-cut bounce
-    if (limiterStyle === 'hard' && revLimiterActive && !this._wasLimiting && pedal > 0.1) {
+    // Skipped when the car ships a recorded limiter loop — that already carries the stutter
+    const hasLimiterSample = this.buffers.has(this._fileConfig.limiterFile);
+    if (limiterStyle === 'hard' && revLimiterActive && !this._wasLimiting && pedal > 0.1 && !hasLimiterSample) {
       this._playLimiterPop(now);
     }
     this._wasLimiting = revLimiterActive;
@@ -514,7 +519,10 @@ export class EngineAudio {
     this._updateDecelLayers(offGain, pitchRPM, detune, now);
 
     // --- 5. Rev limiter (only audible when driver is on throttle — no fuel cut sound when coasting) ---
-    this._updateLimiter(revLimiterActive && actualThrottle > 0.1, now);
+    // Hold the loop between rapid cuts so a 20 Hz stutter doesn't restart it every cut
+    if (revLimiterActive) this._lastCutTime = now;
+    const onLimiter = revLimiterActive || now - (this._lastCutTime ?? -1) < LIMITER_LOOP_HOLD_S;
+    this._updateLimiter(onLimiter && actualThrottle > 0.1, now);
 
     // --- 6. Transmission whine (with oscillation modulation) ---
     this._updateTransmission(speed, gear, gainMod, now);

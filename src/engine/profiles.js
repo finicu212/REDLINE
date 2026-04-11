@@ -76,6 +76,8 @@ const I4_NA = {
   revCutRPM: 6900,
   maxRPM: 7200,
   tachoMaxRPM: 8000,
+  // GT4-style: very short cuts so it stutters right on the limiter instead of bouncing
+  limiter: { style: 'hard', cutMs: 20 },
 
   torqueCurve: [
     [850,  120],
