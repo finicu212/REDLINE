@@ -288,7 +288,7 @@ const V6_2 = {
 const V8_1 = {
   id: 'v8_1',
   name: 'Chevrolet LS3',
-  description: '6.2L LS3 V8',
+  description: '6.2L LS3 Twin-Turbo V8',
   vehicle: 'Chevrolet Corvette C6',
   sound: `GM LS, ${ENGINE_SIM}`,
 
@@ -327,7 +327,8 @@ const V8_1 = {
   brakeDecel: 10.0,
 
   shiftDuration: 170,
-  turbo: false,
+  // Aftermarket twin-turbo kit, two mid-size turbos (~430 → ~660 hp). Curve is stock NA.
+  turbo: { torqueGain: 0.6, curveIncludesBoost: false, bov: true, spool: 1.2 },
 
   exhaust: { pipeLength: 1.8, diameter: 0.076, wet: 0.40 },
   audio: bankAudio('v8_gv8', [1000, 2000, 3000, 4000, 5000, 6000, 6500]),
@@ -342,7 +343,7 @@ const V8_1 = {
 const V8_2 = {
   id: 'v8_2',
   name: 'Chevrolet 454 Big-Block',
-  description: '7.4L 454 LS6 V8',
+  description: '7.4L 454 Supercharged V8',
   vehicle: 'Chevrolet Chevelle SS 454',
   sound: `Chevy 454, ${ENGINE_SIM}`,
 
@@ -383,6 +384,8 @@ const V8_2 = {
 
   shiftDuration: 220,
   turbo: false,
+  // Period Roots blower (6-71 style), ~8 psi, 1.6:1 pulley (~450 → ~680 hp before belt loss)
+  supercharger: { maxBoostBar: 0.55, fullBoostRPM: 2500, torqueGain: 0.55, driveLossNm: 30, pulleyRatio: 1.6 },
 
   exhaust: { pipeLength: 2.0, diameter: 0.064, wet: 0.40 },
   audio: bankAudio('v8_ctv8', [1000, 2000, 3000, 4000, 5000, 6000, 7000]),

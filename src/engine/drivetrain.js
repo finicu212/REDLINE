@@ -57,6 +57,7 @@ const TURBO_WASTEGATE_PSI = 14.7;    // wastegate cracks open here
 const TURBO_BOOST_MULTIPLIER = 0.6;  // torque multiplier at peak boost
 const TURBO_FRICTION = 0.012;        // shaft bearing friction coefficient
 const PSI_PER_BAR = 14.504;
+const SUPERCHARGER_RESPONSE_S = 0.06; // manifold fill time — effectively instant vs a turbo
 const MAX_INTAKE_VACUUM_BAR = 0.7;   // closed-throttle manifold vacuum (petrol)
 const BOV_THRESHOLD_PSI = 2.0;       // BOV vents above this on throttle lift
 const BOV_VENT_RATE = 40;            // psi/s — how fast BOV bleeds manifold pressure
@@ -202,6 +203,14 @@ export class Drivetrain {
     // Turbo state — BeamNG-style exhaust energy → shaft speed → boost
     this._hasTurbo = p ? !!p.turbo : true;  // default true for backward compat
     this._throttlePlate = p?.fuel !== 'diesel'; // diesels are unthrottled: no intake vacuum
+    // Belt-driven Roots blower: boost follows crank speed instantly, no turbine lag
+    this._supercharger = p?.supercharger ? {
+      maxBoostBar: 0.55,    // ~8 psi street blower
+      fullBoostRPM: 2500,   // positive displacement: full boost arrives early
+      torqueGain: 0.55,     // torque added at full boost
+      driveLossNm: 30,      // belt drive loss at 5000 RPM, WOT
+      ...p.supercharger,
+    } : null;
     // profile.turbo may be `true` (legacy petrol tune) or an object overriding these
     this._turbo = {
       torqueGain: TURBO_BOOST_MULTIPLIER, // torque added at full boost
@@ -471,6 +480,7 @@ export class Drivetrain {
 
     // Update turbo spool (only if profile has turbo)
     if (this._hasTurbo) this._updateTurbo(dt, throttle);
+    if (this._supercharger) this._updateSupercharger(dt, throttle);
 
     // Drive torque — constant-power throttle model (BeamNG-style) + turbo boost
     let driveTorque = 0;
@@ -485,10 +495,18 @@ export class Drivetrain {
         // Published curves are on-boost: scale down off-boost so full boost hits the spec
         driveTorque *= (1 + boostFraction * torqueGain) / (curveIncludesBoost ? 1 + torqueGain : 1);
       }
+      if (this._supercharger) {
+        const { maxBoostBar, torqueGain } = this._supercharger;
+        driveTorque *= 1 + (this.boostPsi / (maxBoostBar * PSI_PER_BAR)) * torqueGain;
+      }
     }
 
     // Resistance torque — engine braking scales with closed throttle
     let resistanceTorque = this._frictionTorque;
+    if (this._supercharger) {
+      // The belt always turns the rotors; the bypass valve only cuts pumping work at part throttle
+      resistanceTorque += this._supercharger.driveLossNm * (this.rpm / 5000) * (0.3 + 0.7 * throttle);
+    }
     const closedThrottle = 1 - throttle;
     if (coupled) {
       resistanceTorque += this._engineBrakingFactor * totalRatio * closedThrottle;
@@ -636,6 +654,15 @@ export class Drivetrain {
       this.shiftOscillation = 0;
       this.shiftOscAmplitude = 0;
     }
+  }
+
+  /** @private Roots blower: boost ∝ crank speed up to fullBoostRPM, dumped by the bypass valve off-throttle. */
+  _updateSupercharger(dt, throttle) {
+    const { maxBoostBar, fullBoostRPM } = this._supercharger;
+    const rpmFactor = Math.min(1, this.rpm / fullBoostRPM);
+    const bypassClosed = Math.max(0, Math.min(1, (throttle - 0.2) / 0.8));
+    const target = maxBoostBar * PSI_PER_BAR * rpmFactor * bypassClosed;
+    this.boostPsi += (target - this.boostPsi) * Math.min(1, dt / SUPERCHARGER_RESPONSE_S);
   }
 
   /**

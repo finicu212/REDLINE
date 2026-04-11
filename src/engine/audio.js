@@ -74,6 +74,10 @@ const LIMITER_LOOP_HOLD_S = 0.15;
 const LIMITER_POP_MS = 45;
 const LIMITER_POP_LEVEL = 0.35;
 
+// Roots blower whine: 2 rotors × 3 lobes pass the outlet 6 times per rotor rev
+const SC_LOBE_PASSES_PER_REV = 6;
+const SC_WHINE_LEVEL = 0.05;
+
 // Helical gear hum: pinion teeth for mesh frequency, peak gain (very quiet)
 const GEAR_HUM_TEETH = 11;
 const GEAR_HUM_LEVEL = 0.018;
@@ -308,6 +312,8 @@ export class EngineAudio {
     this._hasTurbo = profile ? !!profile.turbo : true;
     this._turboBov = profile?.turbo?.bov !== false;
     this._turboWhineLevel = profile?.turbo?.whineLevel ?? 1;
+    this._supercharger = profile?.supercharger ?? null;
+    this._scOsc = null;
     this._turboWhineSource = null;
     this._turboWhineGain = null;
     this._turboOsc = null;           // synth fallback if sample missing
@@ -540,6 +546,7 @@ export class EngineAudio {
 
     // --- 8. Turbo whine + BOV ---
     if (this._hasTurbo) this._updateTurboAudio(state, now);
+    if (this._supercharger) this._updateSuperchargerWhine(pitchRPM, state.boostPsi ?? 0, pedal, now);
   }
 
   setRPM(rpm, throttle = true) {
@@ -551,6 +558,7 @@ export class EngineAudio {
     this._stopRevSource();
     this._stopLimiter();
     this._stopTransmission();
+    this._stopSupercharger();
     this._stopDecelLayers();
     if (this.ctx) {
       this.masterGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.05);
@@ -869,6 +877,34 @@ export class EngineAudio {
     this._humGain.gain.setTargetAtTime(level, now, 0.1);
   }
 
+  /**
+   * Roots blower whine: rotor lobes passing the outlet, pitched by crank × pulley.
+   * Always faintly present (belt-driven), louder as the bypass closes and boost builds.
+   */
+  _updateSuperchargerWhine(rpm, boostPsi, pedal, now) {
+    if (!this._scOsc) {
+      this._scFilter = this.ctx.createBiquadFilter();
+      this._scFilter.type = 'bandpass';
+      this._scFilter.Q.value = 4;
+      this._scFilter.connect(this._engineBus);
+      this._scGain = this.ctx.createGain();
+      this._scGain.gain.value = 0;
+      this._scGain.connect(this._scFilter);
+      this._scOsc = this.ctx.createOscillator();
+      this._scOsc.type = 'sawtooth';
+      this._scOsc.connect(this._scGain);
+      this._scOsc.start(now);
+    }
+    const { pulleyRatio = 1.6, maxBoostBar = 0.55 } = this._supercharger;
+    const hz = (rpm / 60) * pulleyRatio * SC_LOBE_PASSES_PER_REV;
+    this._scOsc.frequency.setTargetAtTime(hz, now, 0.02);
+    this._scFilter.frequency.setTargetAtTime(hz * 1.5, now, 0.02);
+    const boost = Math.min(1, boostPsi / (maxBoostBar * 14.504));
+    const level = SC_WHINE_LEVEL * (0.25 + 0.75 * boost) * (0.5 + 0.5 * Math.min(1, rpm / 6000));
+    this._scGain.gain.setTargetAtTime(level, now, 0.04);
+    this.debugScWhineHz = hz;
+  }
+
   _playLimiterPop(now) {
     if (!this._popBuffer) {
       const sr = this.ctx.sampleRate;
@@ -890,6 +926,11 @@ export class EngineAudio {
     g.connect(this._engineBus);
     src.start(now);
     this.debugPops = (this.debugPops || 0) + 1;
+  }
+
+  _stopSupercharger() {
+    if (this._scOsc) { try { this._scOsc.stop(); } catch {} }
+    this._scOsc = null;
   }
 
   _stopTransmission() {

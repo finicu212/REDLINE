@@ -363,7 +363,7 @@
     {/if}
 
     <div class="hud-right">
-      {#if config.profile.turbo}
+      {#if config.profile.turbo || config.profile.supercharger}
         <BoostGauge bar={manifoldBar} />
       {/if}
       <Tachometer {rpm} redline={config.profile.redlineRPM} maxRPM={config.profile.tachoMaxRPM} />

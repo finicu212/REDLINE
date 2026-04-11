@@ -767,3 +767,25 @@ describe('EngineAudio — recorded limiter loop hold', () => {
     expect(ea._limiterActive).toBe(false);
   });
 });
+
+describe('EngineAudio — supercharger whine', () => {
+  it('pitch tracks crank speed × pulley, level rises with boost', async () => {
+    vi.stubGlobal('AudioContext', MockAudioContext);
+    vi.stubGlobal('fetch', mockFetch());
+    const ea = new EngineAudio({
+      idleRPM: 750, redlineRPM: 7000, cylinders: 8, turbo: false,
+      supercharger: { maxBoostBar: 0.55, pulleyRatio: 1.6 },
+      audio: { bank: [{ rpm: 3000, file: '/a/3.wav' }], rev: null, limiter: null, trany: null, tranyDecel: null },
+    });
+    await ea.init();
+    ea.start();
+    const st = (rpm, boostPsi) => ea.setEngineState({ rpm, throttle: 1, gear: 2, speed: 50, shifting: false, revLimiterActive: false, boostPsi });
+    st(3000, 0);
+    const lowBoost = ea._scGain.gain.value;
+    expect(ea._scOsc.frequency.value).toBeCloseTo(3000 / 60 * 1.6 * 6, 0);
+    st(6000, 8);
+    expect(ea._scOsc.frequency.value).toBeCloseTo(6000 / 60 * 1.6 * 6, 0);
+    expect(ea._scGain.gain.value).toBeGreaterThan(lowBoost);
+    expect(ea._scGain.gain.value).toBeLessThan(0.1);
+  });
+});

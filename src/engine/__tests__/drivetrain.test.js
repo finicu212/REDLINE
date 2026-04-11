@@ -731,3 +731,40 @@ describe('Drivetrain — aftermarket turbos', () => {
     }
   });
 });
+
+describe('Drivetrain — Roots supercharger', () => {
+  const sc = async () => (await import('../profiles.js')).PROFILES.v8_2;
+
+  it('454 builds boost almost instantly, unlike a turbo', async () => {
+    const dt = new Drivetrain(await sc());
+    for (let i = 0; i < 12; i++) { dt.rpm = 3000; dt.update(1 / 60, 1); } // 0.2 s
+    expect(dt.getState().manifoldBar).toBeGreaterThan(0.5);
+  });
+
+  it('boost follows RPM below full-boost RPM and dumps at part throttle', async () => {
+    const p = await sc();
+    const at = (rpm, thr) => { const dt = new Drivetrain(p); for (let i = 0; i < 60; i++) { dt.rpm = rpm; dt.update(1 / 60, thr); } return dt.boostPsi; };
+    expect(at(1250, 1)).toBeLessThan(at(2500, 1) * 0.6);
+    expect(at(4000, 0.1)).toBeCloseTo(0, 3);
+    const dt = new Drivetrain(p);
+    for (let i = 0; i < 60; i++) { dt.rpm = 4000; dt.update(1 / 60, 1); }
+    dt.update(1 / 60, 0);
+    expect(dt.getState().bovActive).toBe(false); // bypass valve, not a BOV
+  });
+
+  it('net effect: blown 454 out-accelerates the NA one, and the belt drags off-throttle', async () => {
+    const p = await sc();
+    const run = (profile, throttle) => {
+      const dt = new Drivetrain(profile);
+      dt.shiftUp(); dt.shiftUp();
+      dt.rpm = 3000;
+      dt.speed = (3000 / (profile.gearRatios[2] * profile.finalDrive)) * profile.tireCircumference / 60 * 3.6;
+      const v0 = dt.speed;
+      for (let i = 0; i < 60; i++) dt.update(1 / 60, throttle);
+      return dt.speed - v0;
+    };
+    const na = { ...p, supercharger: undefined };
+    expect(run(p, 1)).toBeGreaterThan(run(na, 1) * 1.3);
+    expect(run(p, 0)).toBeLessThan(run(na, 0)); // more engine braking from the rotors
+  });
+});

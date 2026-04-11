@@ -10,9 +10,10 @@
 
   let selectedProfile = $derived(PROFILE_LIST.find(p => p.id === selectedId));
 
-  // Aftermarket turbos boost on top of the NA curve; the model settles ~90% of max boost
+  // Aftermarket boost adds to the NA curve; turbos settle ~90% of max boost, blowers hit 100%
   function boostFactor(profile) {
     const t = profile.turbo;
+    if (profile.supercharger) return 1 + profile.supercharger.torqueGain; // full boost from 2500 RPM
     return t && typeof t === 'object' && !t.curveIncludesBoost ? 1 + t.torqueGain * 0.9 : 1;
   }
 
