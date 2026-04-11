@@ -17,6 +17,7 @@ Browser-based engine simulator with realistic drivetrain physics, layered audio 
 - **Per-cylinder variation** — subtle timing jitter (±8%) and brightness/detune offsets per cylinder break mechanical perfection in both audio and visuals.
 - **Idle realism** — idle air control holds RPM near 850, per-cylinder firing pulses add ±15 RPM flutter at ~14 Hz. Not a perfect flat line.
 - **Continuous throttle** — 0–1 pedal position from keyboard (space = WOT), mouse drag, touch Y-position, or gamepad right trigger. Partial throttle blends on/off samples with volume scaling.
+- **Turbos** — Opel 2.0 DTI (factory VGT diesel, published on-boost curve), SuperSports (aftermarket single) and 370Z (aftermarket twin kit) boost on top of their NA curves, with BOV.
 - **Boost gauge** — BeamNG-style dial (−1…+1.5 bar) beside the tach on turbo cars: orange arc for boost, blue for intake vacuum on petrol turbos; diesels read ~0 off-boost (unthrottled intake).
 - **Analog tachometer** — DPR-aware canvas gauge with needle smoothing, redline arc, and glow. Responsive via ResizeObserver.
 - **Cylinder visualization** — SVG cylinder bank with firing-order animations, per-cylinder brightness variation, and throttle-colored fills (orange = power, blue = engine braking). Supports inline-4, inline-6, and V6.

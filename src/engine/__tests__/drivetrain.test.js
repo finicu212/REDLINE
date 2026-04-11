@@ -715,3 +715,19 @@ describe('Drivetrain — manifold pressure (boost gauge)', () => {
     expect(dt.getState().manifoldBar).toBeCloseTo(0, 2);
   });
 });
+
+describe('Drivetrain — aftermarket turbos', () => {
+  it('SuperSports and 370Z boost on top of their stock NA curve, with a BOV', async () => {
+    const { PROFILES } = await import('../profiles.js');
+    for (const id of ['i4_na', 'v6_1']) {
+      const p = PROFILES[id];
+      expect(p.turbo.curveIncludesBoost, id).toBe(false);
+      const dt = new Drivetrain(p);
+      const rpm = Math.round(p.redlineRPM * 0.8);
+      for (let i = 0; i < 300; i++) { dt.rpm = rpm; dt.update(1 / 60, 1); }
+      expect(dt.getState().manifoldBar, id).toBeGreaterThan(0.8);
+      dt.update(1 / 60, 0); // lift
+      expect(dt._bovActive, id).toBe(true);
+    }
+  });
+});

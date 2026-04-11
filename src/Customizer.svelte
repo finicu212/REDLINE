@@ -10,6 +10,12 @@
 
   let selectedProfile = $derived(PROFILE_LIST.find(p => p.id === selectedId));
 
+  // Aftermarket turbos boost on top of the NA curve; the model settles ~90% of max boost
+  function boostFactor(profile) {
+    const t = profile.turbo;
+    return t && typeof t === 'object' && !t.curveIncludesBoost ? 1 + t.torqueGain * 0.9 : 1;
+  }
+
   function peakHP(profile) {
     const RPM_TO_RADS = (2 * Math.PI) / 60;
     let max = 0;
@@ -17,7 +23,7 @@
       const hp = (t * r * RPM_TO_RADS) / 745.7;
       if (hp > max) max = hp;
     }
-    return Math.round(max);
+    return Math.round(max * boostFactor(profile));
   }
 
   function peakTorque(profile) {
@@ -25,7 +31,7 @@
     for (const [r, t] of profile.torqueCurve) {
       if (t > max) { max = t; atRPM = r; }
     }
-    return { nm: max, rpm: atRPM };
+    return { nm: Math.round(max * boostFactor(profile)), rpm: atRPM };
   }
 
   async function handleStart() {

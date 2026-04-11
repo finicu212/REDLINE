@@ -66,7 +66,7 @@ function tire(width, aspect, rimInches) {
 const I4_NA = {
   id: 'i4_na',
   name: 'SuperSports',
-  description: 'High-revving 2.0L Inline-4',
+  description: 'High-revving 2.0L Turbo Inline-4',
   vehicle: 'Lightweight track car',
 
   cylinders: 4,
@@ -105,7 +105,8 @@ const I4_NA = {
 
   shiftDuration: 150,
 
-  turbo: false,
+  // Aftermarket single turbo: laggy, top-end heavy (~226 → ~340 hp). Curve is stock NA.
+  turbo: { torqueGain: 0.55, curveIncludesBoost: false, bov: true, spool: 0.9 },
 
   exhaust: { pipeLength: 1.5, diameter: 0.08, wet: 0.30 },
 
@@ -182,7 +183,7 @@ const I4_3 = {
 const V6_1 = {
   id: 'v6_1',
   name: 'Nissan VQ37VHR',
-  description: '3.7L VQ37VHR V6',
+  description: '3.7L VQ37VHR Twin-Turbo V6',
   vehicle: 'Nissan 370Z',
   sound: `even-fire 6-cyl, ${ENGINE_SIM}`,
 
@@ -221,7 +222,8 @@ const V6_1 = {
   brakeDecel: 9.5,
 
   shiftDuration: 160,
-  turbo: false,
+  // Aftermarket twin-turbo kit: two small turbos spool fast (~332 → ~480 hp). Curve is stock NA.
+  turbo: { torqueGain: 0.5, curveIncludesBoost: false, bov: true, spool: 1.3 },
 
   exhaust: { pipeLength: 1.6, diameter: 0.065, wet: 0.35 },
   audio: bankAudio('v6_tsp', [1100, 2000, 3000, 4000, 5000, 6000, 7000, 8000]),
