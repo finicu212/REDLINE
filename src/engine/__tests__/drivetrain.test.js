@@ -654,3 +654,28 @@ describe('Drivetrain — limiter styles', () => {
     expect(maxRPM).toBeLessThan(7200);
   });
 });
+
+describe('Drivetrain — diesel turbo', () => {
+  it('Opel 2.0 DTI: off-boost is well under spec, full boost hits the published torque', async () => {
+    const { PROFILES } = await import('../profiles.js');
+    const p = PROFILES.i4_3;
+    const dt = new Drivetrain(p);
+    dt.boostPsi = 0;
+    const offBoost = dt._throttleTorque(1750, 1) * (1 + 0) / (1 + p.turbo.torqueGain);
+    expect(offBoost).toBeLessThan(0.6 * 230);
+    // Hold 2000 rpm at WOT in neutral-free conditions long enough to spool
+    for (let i = 0; i < 240; i++) { dt.rpm = 2000; dt.update(1 / 60, 1); }
+    expect(dt.boostPsi).toBeGreaterThan(12);
+    dt.rpm = 1750;
+    dt.update(1 / 60, 1);
+    expect(dt.getState().bovActive).toBe(false);
+  });
+
+  it('diesel has no blow-off valve on throttle lift', async () => {
+    const { PROFILES } = await import('../profiles.js');
+    const dt = new Drivetrain(PROFILES.i4_3);
+    for (let i = 0; i < 240; i++) { dt.rpm = 2500; dt.update(1 / 60, 1); }
+    dt.update(1 / 60, 0);
+    expect(dt._bovActive).toBe(false);
+  });
+});

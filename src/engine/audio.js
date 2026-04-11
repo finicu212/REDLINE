@@ -113,8 +113,8 @@ function buildFileConfig(profile) {
       revFile: a.rev === undefined ? DEFAULT_REV_FILE : a.rev,
       limiterFile: a.limiter === undefined ? DEFAULT_LIMITER_FILE : a.limiter,
       tranyFile: a.trany === undefined ? DEFAULT_TRANY_FILE : a.trany,
-      turboWhineFile: a.turboWhine || DEFAULT_TURBO_WHINE_FILE,
-      turboBovFile: a.turboBov || DEFAULT_TURBO_BOV_FILE,
+      turboWhineFile: a.turboWhine === undefined ? DEFAULT_TURBO_WHINE_FILE : a.turboWhine,
+      turboBovFile: a.turboBov === undefined ? DEFAULT_TURBO_BOV_FILE : a.turboBov,
     };
   }
   return {
@@ -306,6 +306,8 @@ export class EngineAudio {
 
     // Turbo audio — sample-based whine + BOV (with synth fallback)
     this._hasTurbo = profile ? !!profile.turbo : true;
+    this._turboBov = profile?.turbo?.bov !== false;
+    this._turboWhineLevel = profile?.turbo?.whineLevel ?? 1;
     this._turboWhineSource = null;
     this._turboWhineGain = null;
     this._turboOsc = null;           // synth fallback if sample missing
@@ -984,12 +986,12 @@ export class EngineAudio {
 
     if (this._turboGain) {
       // Volume: spool² curve, subtle mix
-      const vol = turboSpool * turboSpool * 0.12;
+      const vol = turboSpool * turboSpool * 0.12 * this._turboWhineLevel;
       this._turboGain.gain.setTargetAtTime(vol, now, 0.04);
     }
 
     // BOV: play sample or synth burst
-    if (bovActive && !this._bovActive) {
+    if (bovActive && !this._bovActive && this._turboBov) {
       this._bovActive = true;
       this._playBOV(boostPsi, now);
     } else if (!bovActive) {

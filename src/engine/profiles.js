@@ -43,6 +43,8 @@ function bankAudio(folder, rpms) {
     trany: null,
     tranyDecel: null,
     gearHum: true,
+    turboWhine: null, // no recorded turbo samples: synth whine only
+    turboBov: null,
   };
 }
 
@@ -58,15 +60,14 @@ function tire(width, aspect, rimInches) {
 }
 
 /**
- * I4 NA — Honda S2000 AP1 (2.0L VTEC Inline-4)
- * The original REDLINE engine. High-revving NA with a peaky torque curve.
- * Uses existing BAC Mono audio samples.
+ * SuperSports — generic high-revving 2.0L NA inline-4 track car.
+ * The original REDLINE engine: S2000-derived gearing, BAC Mono audio samples.
  */
 const I4_NA = {
   id: 'i4_na',
-  name: 'Honda F20C',
-  description: '2.0L VTEC Inline-4',
-  vehicle: 'Honda S2000 AP1',
+  name: 'SuperSports',
+  description: 'High-revving 2.0L Inline-4',
+  vehicle: 'Lightweight track car',
 
   cylinders: 4,
   layout: 'inline',
@@ -121,7 +122,7 @@ const ENGINE_SIM = 'engine-sim recording (Stunt Rally 3, CC-BY-4.0)';
  * Opel Astra G 2.0 DTI — Y20DTH 2.0L turbo-diesel I4 (direct injection, 16V)
  * 101 PS @ 4000, 230 Nm @ 1750. Governor, not a fuel cut: fuel is pulled back
  * progressively toward 4400. Heavy dual-mass flywheel, strong compression braking.
- * F23 5-speed. Published curve already includes boost, so turbo physics stay off.
+ * F23 5-speed. torqueCurve is the published on-boost curve; the turbo scales it off-boost.
  */
 const I4_3 = {
   id: 'i4_3',
@@ -165,7 +166,8 @@ const I4_3 = {
   brakeDecel: 8.5,
 
   shiftDuration: 200,
-  turbo: false,
+  // Garrett GT15-class VGT: ~55% torque off-boost, full spec on boost from ~1800. No BOV on a diesel.
+  turbo: { torqueGain: 0.8, curveIncludesBoost: true, bov: false, spool: 1.6, whineLevel: 0.6 },
 
   exhaust: { pipeLength: 1.8, diameter: 0.05, wet: 0.25 },
   audio: bankAudio('i4_astra', [780, 1300, 2260]),

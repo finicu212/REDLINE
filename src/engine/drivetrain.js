@@ -199,6 +199,14 @@ export class Drivetrain {
 
     // Turbo state — BeamNG-style exhaust energy → shaft speed → boost
     this._hasTurbo = p ? !!p.turbo : true;  // default true for backward compat
+    // profile.turbo may be `true` (legacy petrol tune) or an object overriding these
+    this._turbo = {
+      torqueGain: TURBO_BOOST_MULTIPLIER, // torque added at full boost
+      curveIncludesBoost: false,          // true: torqueCurve is the published on-boost curve
+      bov: true,                          // diesels have none — boost just bleeds off
+      spool: 1,                           // turbine drive scale; <1 = bigger, laggier turbo
+      ...(p && typeof p.turbo === 'object' ? p.turbo : {}),
+    };
     this.boostPsi = 0;               // manifold gauge pressure
     this._turboShaftRPS = 0;         // turbine shaft speed (rev/s)
     this._bovActive = false;         // blow-off valve venting
@@ -466,8 +474,13 @@ export class Drivetrain {
     if (throttle > 0 && !this.revLimiterActive) {
       driveTorque = this._throttleTorque(this.rpm, throttle);
       if (this._hasTurbo) {
-        const boostFraction = this.boostPsi / TURBO_MAX_PSI;
-        driveTorque *= (1 + boostFraction * TURBO_BOOST_MULTIPLIER);
+        const { torqueGain, curveIncludesBoost } = this._turbo;
+        // Wastegate settles boost ~10% under max; published curves are measured there
+        const boostFraction = curveIncludesBoost
+          ? Math.min(1, this.boostPsi / (TURBO_WASTEGATE_PSI * 0.9))
+          : this.boostPsi / TURBO_MAX_PSI;
+        // Published curves are on-boost: scale down off-boost so full boost hits the spec
+        driveTorque *= (1 + boostFraction * torqueGain) / (curveIncludesBoost ? 1 + torqueGain : 1);
       }
     }
 
@@ -634,7 +647,7 @@ export class Drivetrain {
     const exhaustFlow = (this.rpm / this._redlineRPM) * throttle;
     // Turbine torque (N·m on shaft) — tuned so WOT at 3000 RPM
     // spools to ~100% in under a second
-    const turbineTorque = exhaustFlow * 3.5;
+    const turbineTorque = exhaustFlow * 3.5 * this._turbo.spool;
 
     // --- Compressor load (back-pressure resists shaft) ---
     // Rises with shaft speed² — this is what limits equilibrium RPM
@@ -662,7 +675,7 @@ export class Drivetrain {
 
     // --- BOV logic ---
     const throttleDrop = this._prevThrottle - throttle;
-    if (throttleDrop > 0.15 && this.boostPsi > BOV_THRESHOLD_PSI) {
+    if (this._turbo.bov && throttleDrop > 0.15 && this.boostPsi > BOV_THRESHOLD_PSI) {
       this._bovActive = true;
     }
 
