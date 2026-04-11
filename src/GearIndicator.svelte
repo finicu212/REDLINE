@@ -3,13 +3,14 @@
 </script>
 
 <div class="gear-hud">
-  <div class="gear-row">
-    <div class="gear-display" class:clutch-in={clutchHeld}>{gear}</div>
-    <div class="shift-hint" class:visible={showShift} aria-hidden={!showShift}>
-      <button tabindex={showShift ? 0 : -1} title="Shift up (↑)" onclick={onshiftup}>&#9650;</button>
-      <button tabindex={showShift ? 0 : -1} title="Shift down (↓)" onclick={onshiftdown}>&#9660;</button>
-    </div>
+  <div class="shift-hint" class:visible={showShift} aria-hidden={!showShift}>
+    <span>PRESS</span>
+    <button class="key" tabindex={showShift ? 0 : -1} title="Shift up" onclick={onshiftup}>&uarr;</button>
+    <span>/</span>
+    <button class="key" tabindex={showShift ? 0 : -1} title="Shift down" onclick={onshiftdown}>&darr;</button>
+    <span>TO SHIFT</span>
   </div>
+  <div class="gear-display" class:clutch-in={clutchHeld}>{gear}</div>
   <div class="speed-display">{Math.round(speed)} <span class="unit">km/h</span></div>
 </div>
 
@@ -19,14 +20,6 @@
     flex-direction: column;
     align-items: center;
     gap: 0.25rem;
-  }
-
-  .gear-row {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    /* reserve the hint's width so the gear letter doesn't jump when it appears */
-    padding-left: 1.4rem;
   }
 
   .gear-display {
@@ -42,11 +35,15 @@
     opacity: 0.45;
   }
 
+  /* Takes its space even while hidden, so the gear letter never jumps */
   .shift-hint {
     display: flex;
-    flex-direction: column;
-    gap: 2px;
-    width: 1rem;
+    align-items: center;
+    gap: 0.35rem;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: clamp(0.5rem, 1.1vmin, 0.65rem);
+    letter-spacing: 0.12em;
+    color: var(--c-text-subtle);
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.6s;
@@ -57,21 +54,31 @@
     pointer-events: auto;
   }
 
-  .shift-hint button {
-    background: transparent;
-    border: 1px solid var(--c-border-subtle);
-    color: var(--c-text-ghost);
-    font-size: 0.5rem;
-    line-height: 1;
-    padding: 2px 0;
-    cursor: pointer;
+  /* Keycap: flat top, thicker bottom edge like a physical arrow key */
+  .key {
+    min-width: 1.6em;
+    height: 1.6em;
+    padding: 0 0.3em;
     font-family: inherit;
-    transition: color 0.2s, border-color 0.2s;
+    font-size: 1.1em;
+    line-height: 1;
+    color: var(--c-text-muted);
+    background: var(--c-bg-panel);
+    border: 1px solid var(--c-border-mid);
+    border-bottom-width: 3px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s, transform 0.05s;
   }
 
-  .shift-hint button:hover {
+  .key:hover {
     color: var(--c-accent);
     border-color: var(--c-accent);
+  }
+
+  .key:active {
+    transform: translateY(2px);
+    border-bottom-width: 1px;
   }
 
   .speed-display {

@@ -698,3 +698,20 @@ describe('Drivetrain — dangerous shifts', () => {
     expect(dt.nanRecoveries).toBe(0);
   });
 });
+
+describe('Drivetrain — manifold pressure (boost gauge)', () => {
+  it('petrol turbo pulls vacuum off-throttle and shows boost on it', () => {
+    const dt = new Drivetrain(); // legacy petrol turbo
+    dt.update(1 / 60, 0);
+    expect(dt.getState().manifoldBar).toBeLessThan(-0.5);
+    for (let i = 0; i < 240; i++) { dt.rpm = 5000; dt.update(1 / 60, 1); }
+    expect(dt.getState().manifoldBar).toBeGreaterThan(0.7);
+  });
+
+  it('diesel never shows vacuum (unthrottled intake)', async () => {
+    const { PROFILES } = await import('../profiles.js');
+    const dt = new Drivetrain(PROFILES.i4_3);
+    dt.update(1 / 60, 0);
+    expect(dt.getState().manifoldBar).toBeCloseTo(0, 2);
+  });
+});

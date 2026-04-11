@@ -56,6 +56,8 @@ const TURBO_MAX_PSI = 14.7;          // peak manifold pressure (1 bar gauge)
 const TURBO_WASTEGATE_PSI = 14.7;    // wastegate cracks open here
 const TURBO_BOOST_MULTIPLIER = 0.6;  // torque multiplier at peak boost
 const TURBO_FRICTION = 0.012;        // shaft bearing friction coefficient
+const PSI_PER_BAR = 14.504;
+const MAX_INTAKE_VACUUM_BAR = 0.7;   // closed-throttle manifold vacuum (petrol)
 const BOV_THRESHOLD_PSI = 2.0;       // BOV vents above this on throttle lift
 const BOV_VENT_RATE = 40;            // psi/s — how fast BOV bleeds manifold pressure
 
@@ -199,6 +201,7 @@ export class Drivetrain {
 
     // Turbo state — BeamNG-style exhaust energy → shaft speed → boost
     this._hasTurbo = p ? !!p.turbo : true;  // default true for backward compat
+    this._throttlePlate = p?.fuel !== 'diesel'; // diesels are unthrottled: no intake vacuum
     // profile.turbo may be `true` (legacy petrol tune) or an object overriding these
     this._turbo = {
       torqueGain: TURBO_BOOST_MULTIPLIER, // torque added at full boost
@@ -295,6 +298,7 @@ export class Drivetrain {
       limiterStyle: this._limiter.style,
       limiterLoad: this._limiterLoad(),
       boostPsi: this.boostPsi,
+      manifoldBar: this._manifoldBar(),
       turboSpool: this._turboShaftRPS / TURBO_MAX_SHAFT_RPS,
       bovActive: this._bovActive,
     };
@@ -341,6 +345,13 @@ export class Drivetrain {
       this._cancelEngagement();
       this.rpm = Math.max(this._idleRPM, Math.min(this._maxRPM, wheelRPM));
     }
+  }
+
+  /** Gauge pressure in bar: boost when spooled, intake vacuum on a closed throttle plate. */
+  _manifoldBar() {
+    const boost = this.boostPsi / PSI_PER_BAR;
+    const vacuum = this._throttlePlate ? MAX_INTAKE_VACUUM_BAR * (1 - this._lastThrottle) : 0;
+    return boost - vacuum;
   }
 
   /** 0–1: how deep into the soft-hold band the engine is while on throttle (drives audio hunting). */

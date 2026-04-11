@@ -5,11 +5,13 @@
   import Odometer from './Odometer.svelte';
   import GearIndicator from './GearIndicator.svelte';
   import DebugOverlay from './DebugOverlay.svelte';
+  import BoostGauge from './BoostGauge.svelte';
   import { Drivetrain } from './engine/drivetrain.js';
 
   let { config } = $props();
 
   let rpm = $state(850);
+  let manifoldBar = $state(0);
   let speed = $state(0);
   let gearLabel = $state('N');
   let throttle = $state(0);       // continuous 0–1
@@ -228,6 +230,7 @@
       neutralIdle = now - neutralSince > NEUTRAL_HINT_MS;
 
       rpm = state.rpm;
+      manifoldBar = state.manifoldBar;
       speed = state.speed;
       gearLabel = state.gearLabel;
 
@@ -360,6 +363,9 @@
     {/if}
 
     <div class="hud-right">
+      {#if config.profile.turbo}
+        <BoostGauge bar={manifoldBar} />
+      {/if}
       <Tachometer {rpm} redline={config.profile.redlineRPM} maxRPM={config.profile.tachoMaxRPM} />
     </div>
   </div>
@@ -414,6 +420,10 @@
   .hud-left,
   .hud-right {
     flex-shrink: 0;
+  }
+
+  .hud-right {
+    gap: clamp(0.25rem, 1vw, 0.75rem);
   }
 
   .hint {
