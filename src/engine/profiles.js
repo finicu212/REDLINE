@@ -64,7 +64,7 @@ function tire(width, aspect, rimInches) {
  */
 const I4_NA = {
   id: 'i4_na',
-  name: 'I4 NA',
+  name: 'Honda F20C',
   description: '2.0L VTEC Inline-4',
   vehicle: 'Honda S2000 AP1',
 
@@ -118,105 +118,56 @@ const I4_NA = {
 const ENGINE_SIM = 'engine-sim recording (Stunt Rally 3, CC-BY-4.0)';
 
 /**
- * Toyota AE86 Sprinter Trueno GT-APEX — 4A-GE 1.6L I4 (JDM, 130 PS)
- * 130 PS @ 6600, 149 Nm @ 5200, redline 7600. T50 5-speed, 4.30 final.
- */
-const I4_2 = {
-  id: 'i4_2',
-  name: 'I4 #2',
-  description: '1.6L 4A-GE Inline-4',
-  vehicle: 'Toyota AE86 Trueno',
-  sound: 'Toyota 4A-GE, real (Freesound, CC0/CC-BY)',
-
-  cylinders: 4,
-  layout: 'inline',
-
-  idleRPM: 850,
-  redlineRPM: 7600,
-  revCutRPM: 7500,
-  maxRPM: 7800,
-  tachoMaxRPM: 9000,
-  limiter: { style: 'hard', cutMs: 70 },
-
-  torqueCurve: [
-    [850,  105],
-    [2000, 120],
-    [3000, 130],
-    [4000, 140],
-    [5200, 149],
-    [6000, 147],
-    [6600, 138],
-    [7200, 122],
-    [7600, 110],
-  ],
-
-  gearRatios: [0, 3.587, 2.022, 1.384, 1.000, 0.861],
-  finalDrive: 4.30,
-  tireCircumference: tire(185, 70, 13),
-  mass: 940,
-
-  engineInertia: 0.11,
-  vehicleInertia: vehicleInertia(940, tire(185, 70, 13)),
-
-  frictionTorque: 7,
-  engineBrakingFactor: 11,
-  brakeDecel: 8.5,
-
-  shiftDuration: 150,
-  turbo: false,
-
-  exhaust: { pipeLength: 1.4, diameter: 0.055, wet: 0.25 },
-  audio: bankAudio('i4_4age', [2170, 4050]),
-};
-
-/**
- * Opel Astra G 1.6 16V — Z16XE I4
- * 101 hp @ 6000, 150 Nm @ 3600, redline 6500. F17 5-speed, 3.94 final.
+ * Opel Astra G 2.0 DTI — Y20DTH 2.0L turbo-diesel I4 (direct injection, 16V)
+ * 101 PS @ 4000, 230 Nm @ 1750. Governor, not a fuel cut: fuel is pulled back
+ * progressively toward 4400. Heavy dual-mass flywheel, strong compression braking.
+ * F23 5-speed. Published curve already includes boost, so turbo physics stay off.
  */
 const I4_3 = {
   id: 'i4_3',
-  name: 'I4 #3',
-  description: '1.6L Ecotec Inline-4',
+  name: 'Opel 2.0 DTI',
+  description: '2.0L Turbo-Diesel Inline-4',
   vehicle: 'Opel Astra G',
-  sound: 'Opel Astra 1.6 16V, real (Freesound, CC-BY)',
+  sound: 'Opel Astra, real (Freesound, CC-BY)',
 
   cylinders: 4,
   layout: 'inline',
+  fuel: 'diesel',
 
-  idleRPM: 780,
-  redlineRPM: 6500,
-  revCutRPM: 6400,
-  maxRPM: 6700,
-  tachoMaxRPM: 7000,
-  limiter: { style: 'soft', cutMs: 0, softRangeRPM: 300 },
+  idleRPM: 800,
+  redlineRPM: 4400,
+  revCutRPM: 4300,
+  maxRPM: 4600,
+  tachoMaxRPM: 6000,
+  limiter: { style: 'soft', cutMs: 0, softRangeRPM: 500 },
 
   torqueCurve: [
-    [780,  110],
-    [1500, 125],
-    [2500, 140],
-    [3600, 150],
-    [4500, 140],
-    [5500, 127],
-    [6000, 120],
-    [6500, 105],
+    [800,  120],
+    [1250, 180],
+    [1750, 230],
+    [2500, 230],
+    [3000, 220],
+    [3500, 200],
+    [4000, 177],
+    [4400, 140],
   ],
 
-  gearRatios: [0, 3.73, 2.14, 1.41, 1.12, 0.89],
-  finalDrive: 3.94,
+  gearRatios: [0, 3.58, 2.02, 1.35, 0.98, 0.81],
+  finalDrive: 3.63,
   tireCircumference: tire(195, 60, 15),
-  mass: 1150,
+  mass: 1250,
 
-  engineInertia: 0.13,
-  vehicleInertia: vehicleInertia(1150, tire(195, 60, 15)),
+  engineInertia: 0.25,
+  vehicleInertia: vehicleInertia(1250, tire(195, 60, 15)),
 
-  frictionTorque: 7,
-  engineBrakingFactor: 11,
+  frictionTorque: 12,
+  engineBrakingFactor: 18,
   brakeDecel: 8.5,
 
-  shiftDuration: 180,
+  shiftDuration: 200,
   turbo: false,
 
-  exhaust: { pipeLength: 1.6, diameter: 0.05, wet: 0.25 },
+  exhaust: { pipeLength: 1.8, diameter: 0.05, wet: 0.25 },
   audio: bankAudio('i4_astra', [780, 1300, 2260]),
 };
 
@@ -227,7 +178,7 @@ const I4_3 = {
  */
 const V6_1 = {
   id: 'v6_1',
-  name: 'V6 #1',
+  name: 'Nissan VQ37VHR',
   description: '3.7L VQ37VHR V6',
   vehicle: 'Nissan 370Z',
   sound: `even-fire 6-cyl, ${ENGINE_SIM}`,
@@ -280,7 +231,7 @@ const V6_1 = {
  */
 const V6_2 = {
   id: 'v6_2',
-  name: 'V6 #2',
+  name: 'DeLorean PRV V6',
   description: '2.85L PRV V6',
   vehicle: 'DeLorean DMC-12',
   sound: 'DeLorean PRV V6, real (Freesound, CC-BY / CC-BY-NC)',
@@ -331,7 +282,7 @@ const V6_2 = {
  */
 const V8_1 = {
   id: 'v8_1',
-  name: 'V8 #1',
+  name: 'Chevrolet LS3',
   description: '6.2L LS3 V8',
   vehicle: 'Chevrolet Corvette C6',
   sound: `GM LS, ${ENGINE_SIM}`,
@@ -384,7 +335,7 @@ const V8_1 = {
  */
 const V8_2 = {
   id: 'v8_2',
-  name: 'V8 #2',
+  name: 'Chevrolet 454 Big-Block',
   description: '7.4L 454 LS6 V8',
   vehicle: 'Chevrolet Chevelle SS 454',
   sound: `Chevy 454, ${ENGINE_SIM}`,
@@ -436,7 +387,7 @@ const V8_2 = {
  */
 const V8_3 = {
   id: 'v8_3',
-  name: 'V8 #3',
+  name: 'Ferrari F136',
   description: '4.5L F136 V8',
   vehicle: 'Ferrari 458 Italia',
   sound: `Ferrari F136, ${ENGINE_SIM}`,
@@ -487,7 +438,7 @@ const V8_3 = {
 
 /** Profile list for UI iteration (stable order) */
 export const PROFILE_LIST = [
-  I4_NA, I4_2, I4_3,
+  I4_NA, I4_3,
   V6_1, V6_2,
   V8_1, V8_2, V8_3,
 ];

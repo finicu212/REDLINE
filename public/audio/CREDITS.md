@@ -22,9 +22,7 @@ Filename is the RPM we estimated from the firing frequency.
 
 | File | Source | Author | License |
 |---|---|---|---|
-| `i4_4age/2170.wav` | [4A-GE Engine Starting and Loop](https://freesound.org/people/qopsinonstudios/sounds/509628/) | qopsinonstudios | [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/) |
-| `i4_4age/4050.wav` | [4A-GE Engine Loop 1](https://freesound.org/people/qopsinonstudios/sounds/509626/) | qopsinonstudios | [CC0](https://creativecommons.org/publicdomain/zero/1.0/) |
-| `i4_astra/1300.wav` | [Car Engine Loop (Opel Astra 1.6 16V)](https://freesound.org/people/qubodup/sounds/147242/) | qubodup | [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/) |
+| `i4_astra/1300.wav` | [Car Engine Loop (Opel Astra; titled 1.6 16V, sounds diesel — used as the 2.0 DTI)](https://freesound.org/people/qubodup/sounds/147242/) | qubodup | [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/) |
 | `i4_astra/780.wav`, `2260.wav` | [Car Engine Ignition Running and Turn Off](https://freesound.org/people/qubodup/sounds/147243/) | qubodup | [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/) |
 | `v6_delorean/960.wav`, `1600.wav` | [DeLorean DMC-12 (PRV V6)](https://freesound.org/people/SkyernAklea/sounds/623436/) | SkyernAklea | [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/) |
 | `v6_delorean/2870.wav` | [DeLorean Steady, Higher RPM](https://freesound.org/people/sndadv/sounds/146187/) | sndadv | [CC-BY-NC-4.0](https://creativecommons.org/licenses/by-nc/4.0/) |

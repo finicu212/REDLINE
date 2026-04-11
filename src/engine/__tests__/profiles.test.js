@@ -21,7 +21,7 @@ const REQUIRED_AUDIO_KEYS = [
 describe('Engine profiles — sound candidates', () => {
   it('offers several sound variants per engine type', () => {
     const count = prefix => PROFILE_LIST.filter(p => p.id.startsWith(prefix)).length;
-    expect(count('i4_')).toBeGreaterThanOrEqual(3);
+    expect(count('i4_')).toBeGreaterThanOrEqual(2);
     expect(count('v6_')).toBeGreaterThanOrEqual(2);
     expect(count('v8_')).toBeGreaterThanOrEqual(2);
   });
@@ -43,8 +43,22 @@ describe('Engine profiles — sound candidates', () => {
     }
   });
 
+  it('diesel profiles behave like diesels: low torque peak, low governed redline', () => {
+    for (const p of PROFILE_LIST.filter(p => p.fuel === 'diesel')) {
+      const [peakRPM] = p.torqueCurve.reduce((a, b) => (b[1] > a[1] ? b : a));
+      expect(peakRPM, p.id).toBeLessThan(2500);
+      expect(p.redlineRPM, p.id).toBeLessThanOrEqual(5000);
+      expect(p.limiter.style, p.id).toBe('soft'); // governor, not a fuel-cut bounce
+    }
+    expect(PROFILE_LIST.some(p => p.fuel === 'diesel')).toBe(true);
+  });
+
+  it('card names are the engine, not a slot number', () => {
+    for (const p of PROFILE_LIST) expect(p.name, p.id).not.toMatch(/#\d|\bNA\b/);
+  });
+
   it('torque curves reproduce published peak power (±3%)', () => {
-    const published = { i4_2: 128, i4_3: 101, v6_1: 332, v6_2: 130, v8_1: 430, v8_2: 450, v8_3: 562 };
+    const published = { i4_3: 100, v6_1: 332, v6_2: 130, v8_1: 430, v8_2: 450, v8_3: 562 };
     for (const [id, hp] of Object.entries(published)) {
       const peak = Math.max(...PROFILES[id].torqueCurve.map(([r, t]) => t * r * 2 * Math.PI / 60 / 745.7));
       expect(Math.abs(peak - hp) / hp, id).toBeLessThan(0.03);
