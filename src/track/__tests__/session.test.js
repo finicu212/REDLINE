@@ -1,0 +1,104 @@
+import { describe, it, expect } from 'vitest';
+import { Drivetrain } from '../../engine/drivetrain.js';
+import { PROFILE_LIST, PROFILES } from '../../engine/profiles.js';
+import { RaceSession } from '../session.js';
+import { Autopilot } from '../autopilot.js';
+
+/** Run the autopilot until `laps` laps complete (or a time cap). */
+function race(profile, { laps = 2, margin = 0.93, record = null } = {}) {
+  const dt = new Drivetrain(profile);
+  const session = new RaceSession(profile, { record });
+  const ap = new Autopilot(session, profile, { margin });
+  const done = [], counts = {};
+  for (let t = 0; t < 420 && done.length < laps; t += 1 / 60) {
+    session.step(1 / 60, dt, ap.drive(dt));
+    for (const e of session.feed) if (e.t === session.time) {
+      counts[e.type] = (counts[e.type] || 0) + 1;
+      if (e.type === 'lap') done.push(e);
+    }
+  }
+  return { session, laps: done, counts, dt };
+}
+
+describe('RaceSession — every car laps Monza cleanly with a sane driver', () => {
+  // Bounds are loose on purpose: they catch broken physics, not tuning drift
+  const bounds = {
+    i4_na: [95, 135], i4_3: [140, 200], v6_1: [110, 150], v6_2: [135, 185],
+    v8_1: [100, 140], v8_2: [120, 165], v8_3: [100, 135],
+  };
+  for (const p of PROFILE_LIST) {
+    it(`${p.name}: 2 valid laps, no spins, plausible time`, () => {
+      const { laps, counts } = race(p);
+      expect(laps).toHaveLength(2);
+      expect(laps.every(l => l.valid)).toBe(true);
+      expect(counts.spin ?? 0).toBe(0);
+      expect(counts.wall ?? 0).toBe(0);
+      const [lo, hi] = bounds[p.id];
+      expect(laps[1].time).toBeGreaterThan(lo);
+      expect(laps[1].time).toBeLessThan(hi);
+    }, 30000);
+  }
+});
+
+describe('RaceSession — feedback plumbing', () => {
+  const { session, laps, counts } = race(PROFILES.v8_3, { laps: 2 });
+
+  it('grades all seven corners every lap and fires sectors + speed trap', () => {
+    expect(counts.corner).toBe(14);
+    expect(counts.sector).toBe(4);
+    expect(counts.speedtrap).toBe(2);
+    expect(Object.keys(session.grader.lastGrades)).toHaveLength(7);
+  });
+
+  it('second lap is a PB with a ghost and a live delta', () => {
+    expect(laps[1].pb).toBe(true);
+    expect(session.timer.pbTrace.length).toBeGreaterThan(100);
+    expect(session.ghostPose()).not.toBeNull();
+    expect(session.timer.delta(session.car.s)).not.toBeNull();
+  });
+
+  it('records brake points for braking corners and keeps the PB lap set', () => {
+    expect(Object.keys(session.grader.lastLapBrakePoints).length).toBeGreaterThanOrEqual(5);
+    expect(Object.keys(session.pbBrakePoints).length).toBeGreaterThanOrEqual(5);
+  });
+
+  it('paints a grip trail for the last lap', () => {
+    expect(session.lastTrail.length / 3).toBeGreaterThan(1000);
+    const usage = session.lastTrail.filter((_, i) => i % 3 === 2);
+    expect(Math.max(...usage)).toBeGreaterThan(0.7);
+  });
+
+  it('record() round-trips into a fresh session', () => {
+    const rec = JSON.parse(JSON.stringify(session.record()));
+    const again = new RaceSession(PROFILES.v8_3, { record: rec });
+    expect(again.timer.bestLap).toBeCloseTo(session.timer.bestLap, 6);
+    expect(again.pbBrakePoints).toEqual(session.pbBrakePoints);
+  });
+});
+
+describe('RaceSession — marks and limits', () => {
+  it('leaves skid marks when the tyres slide and invalidates the lap off track', () => {
+    const p = PROFILES.v8_2;
+    const dt = new Drivetrain(p);
+    const session = new RaceSession(p, { record: null });
+    const ap = new Autopilot(session, p, { margin: 1.25 }); // hopelessly too fast
+    const types = new Set();
+    for (let t = 0; t < 90; t += 1 / 60) {
+      session.step(1 / 60, dt, ap.drive(dt));
+      for (const e of session.feed) if (e.t === session.time) types.add(e.type);
+    }
+    expect(session.skidCount).toBeGreaterThan(50);
+    expect(types.has('offtrack') || types.has('spin')).toBe(true);
+    expect(types.has('invalid')).toBe(true);
+  });
+
+  it('standing start: the clock only starts at the line', () => {
+    const p = PROFILES.v6_1;
+    const dt = new Drivetrain(p);
+    const session = new RaceSession(p, { record: null });
+    expect(session.timer.running).toBe(false);
+    const ap = new Autopilot(session, p);
+    for (let t = 0; t < 8; t += 1 / 60) session.step(1 / 60, dt, ap.drive(dt));
+    expect(session.timer.running).toBe(true);
+  });
+});

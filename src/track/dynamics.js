@@ -22,20 +22,23 @@ export const DEFAULT_CHASSIS = {
   frontGrip: 0.96,    // front tyre grip relative to rear: <1 = stable understeer at the limit
   brakeBias: 0.62,    // share of braking done by the front axle
   drive: 'rwd',       // 'rwd' | 'fwd'
-  abs: true,          // ABS: never locks, brakes just short of the limit
-  tc: false,          // traction control: cuts power instead of spinning up
+  abs: true,          // ABS + EBD: never locks, splits braking by dynamic axle load
+  tc: false,          // traction + stability control: cuts power, damps oversteer, no spins
 };
 
 const SURFACE_GRIP = { track: 1, kerb: 0.9, runoff: 0.5 };
 const LOCKED_SLIDE_MU = 0.8;      // sliding rubber grips less than peak
 const ABS_EFFICIENCY = 0.96;
 const SPIN_YAW = 0.85;            // rad of slip angle that becomes a spin
+const ESC_MAX_YAW = 0.25;
+const TC_TARGET = 0.95;           // traction control keeps driven-axle usage at this         // rad — stability control never lets a slide grow past this
 const SPIN_TIME = 1.3;            // s
 const SPIN_DECEL = 7;             // m/s² while spinning
 const DRIVER_OMEGA = 1.1;         // rad/s — how firmly the "driver" pulls back to the line
 const EDGE = TRACK_HALF_WIDTH - 0.9;
 const BARRIER = TRACK_HALF_WIDTH + KERB_WIDTH + RUNOFF_WIDTH;
 const ACCEL_FILTER_S = 0.12;
+const WALL_BOUNCE = 3;            // m/s back toward the track after a barrier hit
 
 export class CarDynamics {
   /**
@@ -108,16 +111,21 @@ export class CarDynamics {
     const latF = Math.abs(this.aLat) * fs;
     const capF = grip * this.c.frontGrip * front * gEff;
     const availF = Math.sqrt(Math.max(0, capF * capF - latF * latF));
-    return availF / brakeBias;
+    if (!this.c.abs) return availF / brakeBias;
+    // EBD: braking follows load, so the rear contributes what it can after cornering
+    const latR = Math.abs(this.aLat) * (1 - fs);
+    const capR = grip * (1 - front) * gEff;
+    const availR = Math.sqrt(Math.max(0, capR * capR - latR * latR));
+    return availF + availR;
   }
 
   /**
    * Advance one frame. Call after drivetrain.update().
    * @param {number} dt
-   * @param {{ speedMS: number, throttle: number, brake: number }} input
+   * @param {{ speedMS: number, throttle: number, brake: number, clutchSlipping?: boolean }} input
    * @returns {number} speed to scrub from the drivetrain (m/s)
    */
-  update(dt, { speedMS, throttle = 0, brake = 0 }) {
+  update(dt, { speedMS, throttle = 0, brake = 0, clutchSlipping = false }) {
     this.events.length = 0;
     if (!(dt > 0)) return 0;
     const c = this.c;
@@ -128,7 +136,8 @@ export class CarDynamics {
     if (!this._primed) { this._prevV = v; this._primed = true; }
     const rawA = (v - this._prevV) / dt;
     this._prevV = v;
-    this.aLong += (rawA - this.aLong) * Math.min(1, dt / ACCEL_FILTER_S);
+    // Clutch-engagement jolts are drivetrain compliance, not tyre load: hold the filter
+    if (!clutchSlipping) this.aLong += (rawA - this.aLong) * Math.min(1, dt / ACCEL_FILTER_S);
 
     const p = sampleLine(this.line, this.s);
     // Curvature at the car's offset: outside of a corner is a bigger radius
@@ -149,8 +158,10 @@ export class CarDynamics {
     // --- Longitudinal demand per axle ---
     let longF = 0, longR = 0;
     if (this.aLong < 0 && brake > 0) {
-      longF = -this.aLong * c.brakeBias;
-      longR = -this.aLong * (1 - c.brakeBias);
+      // ABS/EBD share braking by dynamic load; older cars have a fixed bias (rear can lock)
+      const bias = c.abs ? this.front : c.brakeBias;
+      longF = -this.aLong * bias;
+      longR = -this.aLong * (1 - bias);
     } else if (this.aLong > 0) {
       if (c.drive === 'fwd') longF = this.aLong; else longR = this.aLong;
     }
@@ -162,16 +173,21 @@ export class CarDynamics {
     const drivenCap = c.drive === 'fwd' ? capF : capR;
     const drivenLat = Math.abs(aLatDemand) * (c.drive === 'fwd' ? fs : 1 - fs);
     const tractionAvail = Math.sqrt(Math.max(0, drivenCap * drivenCap - drivenLat * drivenLat));
-    if (this.aLong > tractionAvail && throttle > 0.05 && v > 1) {
+    // A slipping clutch is the shock absorber during a shift — its jolt isn't tyre demand
+    if (!clutchSlipping && this.aLong > tractionAvail && throttle > 0.05 && v > 1) {
       const excess = this.aLong - tractionAvail;
       if (c.tc) {
+        // TC holds the driven tyres just under the friction-circle limit, leaving cornering grip
+        const tcAvail = Math.sqrt(Math.max(0, (TC_TARGET * drivenCap) ** 2 - drivenLat * drivenLat));
         this.tcActive = true;
-        scrub += excess * dt;
+        scrub += (this.aLong - tcAvail) * dt;
+        if (c.drive === 'fwd') longF = tcAvail; else longR = tcAvail;
       } else {
         this.wheelspin = Math.min(1, excess / Math.max(1, tractionAvail));
         scrub += excess * 0.85 * dt;
-        // spinning tyres lose lateral grip too
-        if (c.drive === 'fwd') longF = drivenCap; else longR = drivenCap * (1 + this.wheelspin);
+        // Spinning tyres use most of their grip going nowhere: little left for cornering
+        const used = drivenCap * Math.min(0.97, 0.75 + 0.25 * this.wheelspin);
+        if (c.drive === 'fwd') longF = used; else longR = used;
       }
     }
 
@@ -209,17 +225,20 @@ export class CarDynamics {
       const deficit = Math.abs(aLatDemand) - latCap;
       if (latCapF <= latCapR) {
         // Understeer: front washes out, car drifts to the outside
-        this.understeer = Math.min(1, deficit / Math.max(1, latCap));
+        this.understeer = Math.min(1, deficit / Math.abs(aLatDemand));
         this.vd += turnSign * deficit * dt;
         this.yaw += (0 - this.yaw) * Math.min(1, dt * 3);
         scrub += 0.3 * deficit * dt;
       } else {
         // Oversteer: rear steps out, nose rotates into the corner, car slides wide a bit
-        this.oversteer = Math.min(1, deficit / Math.max(1, latCap));
-        this.yaw += -turnSign * (deficit / Math.max(8, v)) * 2.2 * dt;
+        this.oversteer = Math.min(1, deficit / Math.abs(aLatDemand));
+        // Stability control brakes single wheels to kill yaw: slides stay small, never spin
+        const yawGain = c.tc ? 0.35 : 1;
+        this.yaw += -turnSign * (deficit / Math.max(8, v)) * 2.2 * yawGain * dt;
         this.vd += turnSign * deficit * 0.45 * dt;
-        scrub += 0.25 * deficit * dt;
-        if (Math.abs(this.yaw) > SPIN_YAW) this._startSpin();
+        scrub += (c.tc ? 0.4 : 0.25) * deficit * dt;
+        if (c.tc) this.yaw = clamp(this.yaw, -ESC_MAX_YAW, ESC_MAX_YAW);
+        else if (Math.abs(this.yaw) > SPIN_YAW) this._startSpin();
       }
     } else {
       // --- Within grip: catch any slide and steer back to the line with spare grip ---
@@ -236,9 +255,12 @@ export class CarDynamics {
     const prevSurface = this.surface;
     this.d += this.vd * dt;
     if (Math.abs(this.d) > BARRIER) {
-      this.d = Math.sign(this.d) * BARRIER;
-      this.vd = 0;
-      scrub += v * 0.5;
+      // Glancing hit on the tyre wall: bounce back toward the track, lose a big chunk of speed
+      const side = Math.sign(this.d);
+      this.d = side * BARRIER;
+      this.vd = -side * WALL_BOUNCE;
+      this.yaw *= 0.3;
+      scrub += v * 0.4;
       this.events.push({ type: 'wall' });
     }
     const newSurface = this._surfaceAt(this.s, this.d);

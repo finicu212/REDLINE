@@ -93,8 +93,10 @@ const I4_NA = {
   ],
 
   gearRatios: [0, 3.133, 2.045, 1.481, 1.161, 0.943],
-  finalDrive: 4.100,
+  finalDrive: 3.400, // taller than the S2000's 4.10: the turbo track car needs ~260 km/h at Monza
   tireCircumference: 1.88,
+  // Track car on slicks with aero: huge grip, no driver aids
+  chassis: { mu: 1.45, downforce: 0.0012, frontWeight: 0.43, cgHeight: 0.2, frontGrip: 0.97, brakeBias: 0.66, drive: 'rwd', abs: false, tc: false },
 
   engineInertia: 0.15,
   vehicleInertia: 90,
@@ -158,6 +160,8 @@ const I4_3 = {
   finalDrive: 3.63,
   tireCircumference: tire(195, 60, 15),
   mass: 1250,
+  // Front-heavy FWD hatch on eco tyres: safe understeer
+  chassis: { mu: 0.92, frontWeight: 0.63, cgHeight: 0.25, frontGrip: 0.95, brakeBias: 0.7, drive: 'fwd', abs: true, tc: false },
 
   engineInertia: 0.25,
   vehicleInertia: vehicleInertia(1250, tire(195, 60, 15)),
@@ -213,6 +217,8 @@ const V6_1 = {
   finalDrive: 3.692,
   tireCircumference: tire(245, 45, 18),
   mass: 1500,
+  // Balanced front-mid RWD coupe, VDC on
+  chassis: { mu: 1.02, frontWeight: 0.54, cgHeight: 0.22, frontGrip: 0.96, brakeBias: 0.64, drive: 'rwd', abs: true, tc: true },
 
   engineInertia: 0.17,
   vehicleInertia: vehicleInertia(1500, tire(245, 45, 18)),
@@ -266,6 +272,8 @@ const V6_2 = {
   finalDrive: 3.44,
   tireCircumference: tire(235, 60, 15),
   mass: 1230,
+  // Rear-engined, 35/65 weight split, no ABS: loose on lift-off
+  chassis: { mu: 0.85, frontWeight: 0.35, cgHeight: 0.23, frontGrip: 1.0, brakeBias: 0.55, drive: 'rwd', abs: false, tc: false },
 
   engineInertia: 0.20,
   vehicleInertia: vehicleInertia(1230, tire(235, 60, 15)),
@@ -318,6 +326,8 @@ const V8_1 = {
   finalDrive: 3.42,
   tireCircumference: tire(285, 35, 19),
   mass: 1490,
+  // Front-mid V8, 50/50, wide tyres, ABS + TC
+  chassis: { mu: 1.05, downforce: 0.0002, frontWeight: 0.51, cgHeight: 0.2, frontGrip: 0.97, brakeBias: 0.62, drive: 'rwd', abs: true, tc: true },
 
   engineInertia: 0.22,
   vehicleInertia: vehicleInertia(1490, tire(285, 35, 19)),
@@ -374,6 +384,8 @@ const V8_2 = {
   finalDrive: 3.73,
   tireCircumference: 2.12, // F70-14 bias ply
   mass: 1750,
+  // 1970 bias-ply tyres, tall and nose-heavy, no aids: respect the throttle
+  chassis: { mu: 0.78, frontWeight: 0.57, cgHeight: 0.28, frontGrip: 0.94, brakeBias: 0.74, drive: 'rwd', abs: false, tc: false },
 
   engineInertia: 0.32,
   vehicleInertia: vehicleInertia(1750, 2.12),
@@ -431,6 +443,8 @@ const V8_3 = {
   finalDrive: 4.44,
   tireCircumference: tire(295, 35, 20),
   mass: 1485,
+  // Mid-engined, sticky tyres, some aero, ABS + F1-Trac
+  chassis: { mu: 1.15, downforce: 0.0005, frontWeight: 0.42, cgHeight: 0.19, frontGrip: 0.98, brakeBias: 0.6, drive: 'rwd', abs: true, tc: true },
 
   engineInertia: 0.20,
   vehicleInertia: vehicleInertia(1485, tire(295, 35, 20)),

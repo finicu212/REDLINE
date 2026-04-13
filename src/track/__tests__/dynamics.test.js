@@ -102,12 +102,20 @@ describe('CarDynamics — brakes', () => {
     const abs = new CarDynamics(circleLine(R), { mu: 0.8, abs: true });
     const raw = new CarDynamics(circleLine(R), { mu: 0.8, abs: false });
     for (const car of [abs, raw]) hold(car, limit(0.8) * 0.9, 0.3);
-    const dAbs = abs.brakeDecelFor(1, 12);
-    const dRaw = raw.brakeDecelFor(1, 12);
+    abs.brakeDecelFor(1, 12);
+    raw.brakeDecelFor(1, 12);
     expect(abs.locked).toBe(false);
     expect(abs.absActive).toBe(true);
     expect(raw.locked).toBe(true);
-    expect(dRaw).toBeLessThan(dAbs);
+    // Locked fronts can't steer: the car washes wide, the ABS car keeps turning
+    for (let t = 0; t < 0.5; t += 1 / 120) {
+      for (const car of [abs, raw]) {
+        car.brakeDecelFor(1, 12);
+        car.update(1 / 120, { speedMS: limit(0.8) * 0.9, throttle: 0, brake: 1 });
+      }
+    }
+    expect(raw.usageF).toBeGreaterThanOrEqual(1.2);
+    expect(raw.d).toBeGreaterThan(abs.d);
   });
 
   it('gentle braking in a straight line never locks', () => {

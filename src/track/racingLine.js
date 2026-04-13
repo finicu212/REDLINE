@@ -130,3 +130,29 @@ export function cornerSpeedLimit(k, mu, downforce = 0) {
   if (denom <= 1e-9) return Infinity;
   return Math.sqrt((mu * G) / denom);
 }
+
+/**
+ * Brake-aware speed profile along the line: the fastest speed at each point from which
+ * the car can still slow for everything ahead, using only the grip left after cornering
+ * (friction circle). Backward pass, looped twice so the lap wraps cleanly.
+ * @param {object} line
+ * @param {{ mu: number, downforce?: number, brakeDecel: number, margin?: number }} opts
+ * @returns {Float64Array} m/s per line sample
+ */
+export function speedProfile(line, { mu, downforce = 0, brakeDecel, margin = 1 }) {
+  const n = line.n, L = line.length;
+  const vmax = Float64Array.from(line.curvature, k => Math.min(150, cornerSpeedLimit(k, mu, downforce) * margin));
+  const v = Float64Array.from(vmax);
+  for (let pass = 0; pass < 2; pass++) {
+    for (let i = n - 1; i >= 0; i--) {
+      const j = (i + 1) % n;
+      const ds = ((line.s[j] - line.s[i]) + L) % L;
+      const vj = v[j];
+      const grip = mu * margin * (G + downforce * vj * vj);
+      const lat = vj * vj * Math.abs(line.curvature[j]);
+      const aBrake = Math.min(brakeDecel, Math.sqrt(Math.max(0, grip * grip - lat * lat)));
+      v[i] = Math.min(vmax[i], Math.sqrt(vj * vj + 2 * aBrake * ds));
+    }
+  }
+  return v;
+}
