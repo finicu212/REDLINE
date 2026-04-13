@@ -86,3 +86,33 @@ export const statusTurboText   = '#ce93d8';
 
 // ── Braking blue (cylinder + debug) ─────────────────────────
 export const blue            = '#3a6fff';
+
+// --- Track view (daylight park palette, cozy but readable) ---
+export const trkGrass       = '#56793f';
+export const trkGrassDark   = '#4b6c37';
+export const trkRunoff      = '#679046';
+export const trkGravel      = '#c7b98c';
+export const trkAsphalt     = '#484a50';
+export const trkAsphaltDark = '#3e4045';
+export const trkLine        = 'rgba(245, 245, 240, 0.85)';
+export const trkKerbRed     = '#c8352c';
+export const trkKerbWhite   = '#efefea';
+export const trkBarrier     = '#2d3036';
+export const trkTreeDark    = '#2e5428';
+export const trkTreeLight   = '#4e7a3a';
+export const trkPineDark    = '#26482c';
+export const trkPineLight   = '#3e683c';
+export const trkShadow      = 'rgba(0, 0, 0, 0.22)';
+export const trkSkid        = '20, 20, 22';           // rgb for alpha-blended skid marks
+export const trkRacingLine  = 'rgba(255, 255, 255, 0.10)';
+export const trkGhost       = 'rgba(200, 220, 255, 0.45)';
+export const gradePerfect   = '#c77dff';               // purple — F1 "best ever"
+export const gradeGreat     = '#3ecf5a';
+export const gradeGood      = '#5ab4e8';
+export const gradeMeh       = '#9aa0a6';
+export const gradeWarn      = '#ffb300';
+export const gradeBad       = '#ff4d3d';
+export const trailGood      = 'rgba(62, 207, 90, 0.55)';
+export const trailEdge      = 'rgba(255, 196, 0, 0.7)';
+export const trailOver      = 'rgba(255, 70, 50, 0.85)';
+export const pbGold         = '#ffd24a';

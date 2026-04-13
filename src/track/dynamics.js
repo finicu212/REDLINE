@@ -147,7 +147,7 @@ export class CarDynamics {
     this.aLat = aLatDemand;
 
     // --- Loads and capacities ---
-    this.surface = this._surfaceAt(this.s, this.d);
+    this.surface = this._surfaceAt(this.s, p.offset + this.d);
     const grip = c.mu * SURFACE_GRIP[this.surface];
     const gEff = G + c.downforce * v * v;
     const fs = c.frontWeight;
@@ -251,19 +251,20 @@ export class CarDynamics {
     // Sliding sideways costs speed
     scrub += Math.abs(this.yaw) * v * 0.35 * dt;
 
-    // --- Lateral position, runoff, barrier ---
+    // --- Lateral position, runoff, barrier (edges are measured from the centerline) ---
     const prevSurface = this.surface;
     this.d += this.vd * dt;
-    if (Math.abs(this.d) > BARRIER) {
+    const fromCenter = p.offset + this.d;
+    if (Math.abs(fromCenter) > BARRIER) {
       // Glancing hit on the tyre wall: bounce back toward the track, lose a big chunk of speed
-      const side = Math.sign(this.d);
-      this.d = side * BARRIER;
+      const side = Math.sign(fromCenter);
+      this.d = side * BARRIER - p.offset;
       this.vd = -side * WALL_BOUNCE;
       this.yaw *= 0.3;
       scrub += v * 0.4;
       this.events.push({ type: 'wall' });
     }
-    const newSurface = this._surfaceAt(this.s, this.d);
+    const newSurface = this._surfaceAt(this.s, p.offset + this.d);
     if (newSurface === 'runoff') {
       scrub += (2.5 + 0.004 * v * v) * dt;
       if (prevSurface !== 'runoff') this.events.push({ type: 'offtrack' });
@@ -288,8 +289,9 @@ export class CarDynamics {
     this.events.push({ type: 'spin' });
   }
 
-  _surfaceAt(s, d) {
-    const ad = Math.abs(d);
+  /** @param {number} fromCenter - lateral position relative to the track centerline */
+  _surfaceAt(s, fromCenter) {
+    const ad = Math.abs(fromCenter);
     if (ad <= EDGE) return 'track';
     if (ad <= TRACK_HALF_WIDTH + KERB_WIDTH && this._inKerbZone(s)) return 'kerb';
     if (ad <= TRACK_HALF_WIDTH) return 'track';

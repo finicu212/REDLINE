@@ -77,6 +77,13 @@
     --c-bar-boost: #ce93d8;
     --c-status-turbo-bg: #2a1b3a;
     --c-status-turbo: #ce93d8;
+
+    /* Time-attack grades (mirrors tokens.js) */
+    --c-grade-perfect: #c77dff;
+    --c-grade-great: #3ecf5a;
+    --c-grade-good: #5ab4e8;
+    --c-grade-bad: #ff4d3d;
+    --c-pb-gold: #ffd24a;
   }
 
   :global(body) {

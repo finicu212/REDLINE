@@ -1,6 +1,13 @@
 <script>
   import { EngineAudio } from './engine/audio.js';
   import { PROFILE_LIST } from './engine/profiles.js';
+  import { loadRecord } from './track/storage.js';
+
+  const records = Object.fromEntries(PROFILE_LIST.map(p => [p.id, loadRecord(p.id)]));
+  function fmtLap(t) {
+    const m = Math.floor(t / 60);
+    return `${m}:${(t - m * 60).toFixed(3).padStart(6, '0')}`;
+  }
 
   let { onstart } = $props();
 
@@ -73,6 +80,9 @@
           <span>{profile.cylinders}cyl {profile.layout === 'v' ? 'V' : 'I'}</span>
           <span>Redline {profile.redlineRPM}</span>
         </div>
+        {#if records[profile.id]?.bestLap}
+          <div class="card-pb">MONZA PB <b>{fmtLap(records[profile.id].bestLap)}</b></div>
+        {/if}
         {#if profile.sound}
           <div class="card-sound">{profile.sound}</div>
         {/if}
@@ -177,6 +187,17 @@
     color: var(--c-text-ghost);
     text-transform: uppercase;
     letter-spacing: 0.08em;
+  }
+
+  .card-pb {
+    font-size: 0.6rem;
+    letter-spacing: 0.08em;
+    color: var(--c-text-subtle);
+  }
+
+  .card-pb b {
+    color: var(--c-pb-gold);
+    font-weight: normal;
   }
 
   .card-sound {

@@ -152,7 +152,7 @@
 <style>
   .debug-overlay {
     position: absolute;
-    top: 44px;
+    top: 230px; /* below the track minimap */
     right: 12px;
     background: var(--c-bg-overlay);
     border: 1px solid var(--c-bg-panel);

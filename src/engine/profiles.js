@@ -68,6 +68,7 @@ const I4_NA = {
   name: 'SuperSports',
   description: 'High-revving 2.0L Turbo Inline-4',
   vehicle: 'Lightweight track car',
+  color: '#ffb300',
 
   cylinders: 4,
   layout: 'inline',
@@ -132,6 +133,7 @@ const I4_3 = {
   name: 'Opel 2.0 DTI',
   description: '2.0L Turbo-Diesel Inline-4',
   vehicle: 'Opel Astra G',
+  color: '#2f62b3',
   sound: 'Opel Astra, real (Freesound, CC-BY)',
 
   cylinders: 4,
@@ -189,6 +191,7 @@ const V6_1 = {
   name: 'Nissan VQ37VHR',
   description: '3.7L VQ37VHR Twin-Turbo V6',
   vehicle: 'Nissan 370Z',
+  color: '#f08a24',
   sound: `even-fire 6-cyl, ${ENGINE_SIM}`,
 
   cylinders: 6,
@@ -245,6 +248,7 @@ const V6_2 = {
   name: 'DeLorean PRV V6',
   description: '2.85L PRV V6',
   vehicle: 'DeLorean DMC-12',
+  color: '#c9ccd1',
   sound: 'DeLorean PRV V6, real (Freesound, CC-BY / CC-BY-NC)',
 
   cylinders: 6,
@@ -298,6 +302,7 @@ const V8_1 = {
   name: 'Chevrolet LS3',
   description: '6.2L LS3 Twin-Turbo V8',
   vehicle: 'Chevrolet Corvette C6',
+  color: '#1f6fd6',
   sound: `GM LS, ${ENGINE_SIM}`,
 
   cylinders: 8,
@@ -355,6 +360,7 @@ const V8_2 = {
   name: 'Chevrolet 454 Big-Block',
   description: '7.4L 454 Supercharged V8',
   vehicle: 'Chevrolet Chevelle SS 454',
+  color: '#2f8a57',
   sound: `Chevy 454, ${ENGINE_SIM}`,
 
   cylinders: 8,
@@ -413,6 +419,7 @@ const V8_3 = {
   name: 'Ferrari F136',
   description: '4.5L F136 V8',
   vehicle: 'Ferrari 458 Italia',
+  color: '#d4121b',
   sound: `Ferrari F136, ${ENGINE_SIM}`,
 
   cylinders: 8,

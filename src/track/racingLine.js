@@ -114,6 +114,8 @@ export function sampleLine(line, s) {
     y: line.y[i] + (line.y[j] - line.y[i]) * t,
     heading,
     curvature: line.curvature[i] + (line.curvature[j] - line.curvature[i]) * t,
+    // how far the line sits left of the track centerline here
+    offset: line.offset ? line.offset[i] + (line.offset[j] - line.offset[i]) * t : 0,
     // left-pointing unit normal of the line
     nx: -Math.cos(heading),
     ny: Math.sin(heading),

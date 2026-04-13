@@ -1,7 +1,10 @@
 <script>
   import { onMount } from 'svelte';
   import Tachometer from './Tachometer.svelte';
-  import CylinderBank from './CylinderBank.svelte';
+  import TrackView from './TrackView.svelte';
+  import TrackHud from './TrackHud.svelte';
+  import { RaceSession } from './track/session.js';
+  import { Autopilot } from './track/autopilot.js';
   import Odometer from './Odometer.svelte';
   import GearIndicator from './GearIndicator.svelte';
   import DebugOverlay from './DebugOverlay.svelte';
@@ -30,7 +33,7 @@
   let showHint = $state(true);
   let showControls = $state(false);
   let isTouchDevice = $state(false);
-  let showDebug = $state(true);
+  let showDebug = $state(false);
   let debugState = $state(null);
 
   // --- Touch state ---
@@ -43,7 +46,7 @@
 
   // --- Gamepad state ---
   let gamepadThrottle = $state(0);
-  let gamepadBraking = $state(false);
+  let gamepadBrake = $state(0);
   let gamepadClutch = $state(false);
   let gpShiftUpPrev = false;
   let gpShiftDownPrev = false;
@@ -51,6 +54,13 @@
   /** @type {import('./engine/audio.js').EngineAudio} */
   const engineAudio = config.engineAudio;
   const drivetrain = new Drivetrain(config.profile);
+  const race = new RaceSession(config.profile);
+  let frame = $state(0);
+  // Keyboard brake is on/off: ramp it like a foot so trail-braking is possible
+  const BRAKE_APPLY_PER_S = 8;
+  const BRAKE_RELEASE_PER_S = 12;
+  let brakePedal = 0;
+  let devPilot = null;
 
   function onKeyDown(e) {
     if (e.code === 'Space' && !e.repeat) {
@@ -75,6 +85,9 @@
     }
     if (e.code === 'Backquote' && !e.repeat) {
       showDebug = !showDebug;
+    }
+    if (e.code === 'KeyR' && !e.repeat) {
+      race.resetToGrid(drivetrain);
     }
   }
 
@@ -162,13 +175,13 @@
     const gp = gamepads[0];
     if (!gp) {
       gamepadThrottle = 0;
-      gamepadBraking = false;
+      gamepadBrake = 0;
       return;
     }
 
     // Standard mapping: buttons[7] = RT (throttle), buttons[6] = LT (brake)
     gamepadThrottle = gp.buttons[7] ? gp.buttons[7].value : 0;
-    gamepadBraking = gp.buttons[6] ? gp.buttons[6].value > 0.1 : false;
+    gamepadBrake = gp.buttons[6] ? gp.buttons[6].value : 0;
 
     // LB (buttons[4]) = clutch (hold)
     gamepadClutch = gp.buttons[4] ? gp.buttons[4].pressed : false;
@@ -217,11 +230,26 @@
         gamepadThrottle,
       );
       throttle = Math.max(0, Math.min(1, throttle));
-      const isBraking = braking || touchBraking || gamepadBraking;
+      const digitalBrake = braking || touchBraking ? 1 : 0;
+      const stepDt = Math.min(0.05, Math.max(0, dt));
+      brakePedal = digitalBrake > brakePedal
+        ? Math.min(digitalBrake, brakePedal + BRAKE_APPLY_PER_S * stepDt)
+        : Math.max(digitalBrake, brakePedal - BRAKE_RELEASE_PER_S * stepDt);
+      const brake = Math.max(brakePedal, gamepadBrake > 0.05 ? gamepadBrake : 0);
+      const isBraking = brake > 0;
 
       drivetrain.clutchHeld = clutchHeld || touchClutch || gamepadClutch;
 
-      drivetrain.update(dt, throttle, isBraking);
+      // Dev-only: `window.__redlineAutopilot = true` lets the test driver take over (playtests)
+      if (import.meta.env.DEV && window.__redlineAutopilot) {
+        devPilot ??= new Autopilot(race, config.profile, { margin: window.__redlineAutopilot.margin ?? 0.95 });
+        const ai = devPilot.drive(drivetrain);
+        throttle = ai.throttle;
+        race.step(dt, drivetrain, ai);
+      } else {
+        race.step(dt, drivetrain, { throttle, brake });
+      }
+      frame++;
 
       const state = drivetrain.getState();
       state.throttle = throttle;
@@ -234,7 +262,10 @@
       speed = state.speed;
       gearLabel = state.gearLabel;
 
-      if (engineAudio) engineAudio.setEngineState(state);
+      if (engineAudio) {
+        engineAudio.setEngineState(state);
+        engineAudio.setTyreState(race.car, race.feed, race.time);
+      }
 
       if (showDebug) {
         debugState = {
@@ -270,7 +301,8 @@
 
 <div class="sim" class:sim-touch={isTouchDevice}>
   <div class="cylinder-area">
-    <CylinderBank {rpm} cylinders={config.profile.cylinders} layout={config.profile.layout} {throttle} />
+    <TrackView session={race} carColor={config.profile.color} />
+    <TrackHud session={race} tick={frame} />
   </div>
 
   <!-- Throttle bar -->
@@ -320,7 +352,7 @@
 
     <div class="hud-center">
       {#if showHint}
-        <p class="hint">{isTouchDevice ? 'DRAG UP to rev' : 'SPACE / DRAG UP to rev'}</p>
+        <p class="hint">{isTouchDevice ? 'DRAG UP to go · BRK to brake' : 'SPACE go · S brake · ↑↓ shift · R reset'}</p>
       {/if}
       <GearIndicator gear={gearLabel} {speed} clutchHeld={drivetrain.clutchHeld}
         showShift={neutralIdle}
@@ -341,6 +373,7 @@
             <div class="controls-row"><span class="controls-key">SHIFT / C</span> Clutch (hold to shift)</div>
             <div class="controls-row"><span class="controls-key">{'\u2191'} {'\u2193'}</span> Shift up / down</div>
             <div class="controls-row"><span class="controls-key">S / B</span> Brake</div>
+            <div class="controls-row"><span class="controls-key">R</span> Back to the grid</div>
             <div class="controls-row"><span class="controls-key">`</span> Toggle debug</div>
           </div>
           <div class="controls-section">
@@ -387,9 +420,7 @@
   .cylinder-area {
     flex: 1;
     min-height: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    position: relative;
   }
 
   /* --- Desktop HUD: bottom bar with odometer | gear | tachometer --- */
@@ -651,9 +682,7 @@
     .sim-touch .cylinder-area {
       grid-row: 1;
       flex: none;
-      padding: 0.5rem 0;
-      min-height: 80px;
-      max-height: 20vh;
+      height: 52vh;
     }
 
     /* Move tachometer from hud-right to center of the screen */

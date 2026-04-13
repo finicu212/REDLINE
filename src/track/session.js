@@ -14,7 +14,7 @@ import { loadRecord, saveRecord } from './storage.js';
 const GRID_BEHIND_LINE = 80;     // m — standing start, clock starts at the line
 const SKID_CAPACITY = 24000;     // segments kept for the session (ring buffer)
 const TRAIL_STEP = 4;            // m between grip-trail samples
-const SPEEDTRAP_BEFORE = 130;    // m before Rettifilo's entry
+const SPEEDTRAP_BEFORE = 420;    // m before Rettifilo's entry — ahead of any sane braking point
 const FEED_TTL = 6;              // s a feed event stays readable
 
 let cached = null;
@@ -70,6 +70,7 @@ export class RaceSession {
     this._trailS = null;
 
     this.feed = [];           // { t, ...event } — HUD/renderer read, TTL-pruned
+    this._lapGrades = [];
     this.time = 0;
     this.brake = 0;
     this.throttle = 0;
@@ -132,7 +133,13 @@ export class RaceSession {
       v: car.v, brake, throttle, surface: car.surface, spinning: car.spinTimer > 0,
       slide: Math.max(car.understeer, car.oversteer, car.locked ? 0.5 : 0, car.wheelspin * 0.5),
     });
-    if (grade) this._emit(grade);
+    if (grade) {
+      const pbBrake = this.pbBrakePoints[grade.name];
+      // + = braked later (deeper) than on the PB lap
+      grade.brakeVsPB = grade.brakeS != null && pbBrake != null ? grade.brakeS - pbBrake : null;
+      this._lapGrades.push(grade.tone);
+      this._emit(grade);
+    }
 
     this._marks();
     this._prune();
@@ -146,6 +153,8 @@ export class RaceSession {
       this.trail = [];
       e.topSpeed = this.lapTopSpeed;
       this.lapTopSpeed = 0;
+      e.grades = countBy(this._lapGrades);
+      this._lapGrades = [];
       if (e.pb && this._persist) saveRecord(this.carId, this.record());
     }
     this._emit(e);
@@ -205,6 +214,28 @@ export class RaceSession {
     if (i) this.feed.splice(0, i);
   }
 
+  /** Back to the grid for a fresh attempt. PBs, skid marks and grades stay — they're earned. */
+  /** Sum of best sectors: the lap you've proven you can do. */
+  get idealLap() {
+    const b = this.timer.bestSectors;
+    return b.every(x => x != null) ? b[0] + b[1] + b[2] : null;
+  }
+
+  resetToGrid(drivetrain) {
+    drivetrain.stop();
+    this.car.reset(this.line.length - GRID_BEHIND_LINE);
+    this.timer.running = false;
+    this.timer._prevS = null;
+    this.timer.t = 0;
+    this.trail = [];
+    this._trailS = null;
+    this._lastSkid = null;
+    this.grader._active = null;
+    this.grader.brakePoints = {};
+    this._lapGrades = [];
+    this._emit({ type: 'reset' });
+  }
+
   /** Ghost of the PB lap: world pose or null. */
   ghostPose() {
     const s = this.timer.ghostS();
@@ -226,4 +257,10 @@ export class RaceSession {
   get halfWidth() {
     return TRACK_HALF_WIDTH;
   }
+}
+
+function countBy(arr) {
+  const out = {};
+  for (const k of arr) out[k] = (out[k] || 0) + 1;
+  return out;
 }

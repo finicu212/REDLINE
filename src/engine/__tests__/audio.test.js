@@ -789,3 +789,43 @@ describe('EngineAudio — supercharger whine', () => {
     expect(ea._scGain.gain.value).toBeLessThan(0.1);
   });
 });
+
+describe('EngineAudio — tyres and surfaces', () => {
+  let ea;
+  beforeEach(async () => {
+    vi.stubGlobal('AudioContext', MockAudioContext);
+    vi.stubGlobal('fetch', mockFetch());
+    ea = new EngineAudio();
+    await ea.init();
+    ea.start();
+  });
+  const car = (o) => ({ v: 30, squeal: 0, locked: false, surface: 'track', ...o });
+
+  it('silent when gripping, squeals near the limit, screeches higher when locked', () => {
+    ea.setTyreState(car({}));
+    expect(ea._tyres.squealGain.gain.value).toBe(0);
+    ea.setTyreState(car({ squeal: 0.6 }));
+    const g = ea._tyres.squealGain.gain.value, f = ea._tyres.oscA.frequency.value;
+    expect(g).toBeGreaterThan(0);
+    ea.setTyreState(car({ squeal: 0.6, locked: true }));
+    expect(ea._tyres.oscA.frequency.value).toBeGreaterThan(f);
+    expect(ea._tyres.squealGain.gain.value).toBeGreaterThan(g);
+  });
+
+  it('gravel and kerb layers follow the surface; kerb rumble rate follows speed', () => {
+    ea.setTyreState(car({ surface: 'runoff' }));
+    expect(ea._tyres.gravelGain.gain.value).toBeGreaterThan(0);
+    ea.setTyreState(car({ surface: 'kerb', v: 30 }));
+    expect(ea._tyres.kerbGain.gain.value).toBeGreaterThan(0);
+    expect(ea._tyres.kerbLfo.frequency.value).toBeCloseTo(20, 0);
+    expect(ea._tyres.gravelGain.gain.value).toBe(0);
+  });
+
+  it('plays one impact per barrier hit', () => {
+    ea.setTyreState(car({})); // builds the tyre graph
+    const before = ea.ctx.createOscillator.mock.calls.length;
+    ea.setTyreState(car({}), [{ t: 1, type: 'wall' }], 1);
+    ea.setTyreState(car({}), [{ t: 1, type: 'wall' }], 1.1);
+    expect(ea.ctx.createOscillator.mock.calls.length - before).toBe(1);
+  });
+});

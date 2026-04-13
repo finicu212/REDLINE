@@ -30,6 +30,7 @@ export class LapTimer {
     this.pbTrace = record?.pbTrace ?? null; // Float32Array-like [s0, t0, s1, t1, ...]
     this.topSpeed = record?.topSpeed ?? 0;
     this.laps = [];
+    this.lastSectorColors = [];            // colour each sector last got (minimap)
     this._trace = [];
     this._lastTraceS = -Infinity;
     this._prevS = null;
@@ -93,6 +94,7 @@ export class LapTimer {
     } else if (last == null || time < last) {
       color = 'green';
     }
+    this.lastSectorColors[i] = color;
     return { type: 'sector', index: i, time, color, delta: best === null ? null : time - best };
   }
 
@@ -185,7 +187,12 @@ export class CornerGrader {
    * @param {number} length - line length
    */
   constructor(corners, length) {
-    this.corners = corners;
+    // A corner's braking zone can't reach back into the previous corner
+    this.corners = corners.map((c, i) => {
+      const prev = corners[(i - 1 + corners.length) % corners.length];
+      const gap = ((c.sEntry - prev.sExit) % length + length) % length;
+      return { ...c, approachM: Math.min(APPROACH_M, gap) };
+    });
     this.length = length;
     this.streak = 0;
     this.bestStreak = 0;
@@ -233,7 +240,7 @@ export class CornerGrader {
   }
 
   _approaching(s) {
-    return this.corners.find(c => inWindow(s, c.sEntry - APPROACH_M, c.sEntry, this.length));
+    return this.corners.find(c => inWindow(s, c.sEntry - c.approachM, c.sEntry, this.length));
   }
 
   _grade(a) {

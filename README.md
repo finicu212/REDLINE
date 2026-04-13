@@ -21,7 +21,11 @@ Browser-based engine simulator with realistic drivetrain physics, layered audio 
 - **Supercharger** — 454 runs a period Roots blower: boost tracks crank speed with no lag (full from ~2500 RPM), bypass valve dumps it at part throttle, belt drive costs crank torque, synthesized rotor whine pitched by crank × pulley.
 - **Boost gauge** — BeamNG-style dial (−1…+1.5 bar) beside the tach on turbo cars: orange arc for boost, blue for intake vacuum on petrol turbos; diesels read ~0 off-boost (unthrottled intake).
 - **Analog tachometer** — DPR-aware canvas gauge with needle smoothing, redline arc, and glow. Responsive via ResizeObserver.
-- **Cylinder visualization** — SVG cylinder bank with firing-order animations, per-cylinder brightness variation, and throttle-colored fills (orange = power, blue = engine braking). Supports inline-4, inline-6, and V6.
+- **Monza time attack** — top-down 2D Autodromo Nazionale (GP layout, 5.8 km) built from real straights/radii. Every car follows the same minimum-curvature racing line; you drive the engine and brakes and have to nail each corner's entry speed. Standing start, the clock runs from the line, PBs are saved per car.
+- **Tyre model** — per-axle friction circle with weight transfer (braking loads the nose → sharper turn-in, looser rear; throttle loads the rear → push). Front saturates first → understeer and run wide; rear first → oversteer, yaw, spins. Grip-limited brakes: ABS/EBD cars brake at the limit, older cars lock up (no steering). Wheelspin on no-TC cars, stability control on TC cars. Downforce, kerbs, gravel traps, tyre walls, track limits.
+- **Per-car chassis** — grip, downforce, weight distribution, CG height, brake bias, FWD/RWD, ABS, TC, tuned per car (slicks + aero SuperSports, 50/50 LS3, rear-engined DeLorean, bias-ply 454...).
+- **Player feedback everywhere** (Gabe Newell's "bullet holes": the world should acknowledge you) — persistent skid marks, a grip-usage trail painted on the track (green/amber/red), brake-point ticks (this lap / last lap / PB in gold), corner grades that pop at each apex and stay as badges (PERFECT / GREAT / GOOD / SAFE / TOO HOT / SPIN / OFF TRACK / FLAT OUT, with speed vs limit), clean-corner streaks, purple/green/yellow sectors, live delta and a PB ghost, speed-trap records, NEW PERSONAL BEST celebration, friction-circle meter with front/rear usage bars, tyre smoke, gravel dust, kerb rumble, screen shake.
+- **Tyre audio** — squeal that starts just *before* the limit (listen for it), higher screech when locked, gravel crunch, kerb rumble at the stripe rate, barrier thump.
 - **Color token system** — all colors in `tokens.js` + CSS custom properties. Canvas/SVG code imports JS tokens; stylesheets use `var(--c-*)`.
 - **Responsive layout** — works on desktop and mobile. Touch devices get on-screen clutch/shift/brake buttons and Y-axis throttle.
 - **Debug overlay** — real-time bars for RPM (red on over-rev), speed, torque, throttle, boost, inertia, detune, clutch/engagement status, turbo spool, BOV, oscillation, audio band gains, and frame timing sparkline. Toggle with backtick.
@@ -36,7 +40,8 @@ Browser-based engine simulator with realistic drivetrain physics, layered audio 
 | **Shift / C** | Clutch (hold to decouple, shift, release to engage) |
 | **Arrow Up / Down** | Shift up / down (works with or without clutch; no over-rev protection — money shifts allowed) |
 | **PRESS ↑ / ↓ TO SHIFT** | Keycap hint above the gear after ~3 s idle in neutral; keys are clickable |
-| **S** or **B** | Brake |
+| **S** or **B** | Brake (ramps in like a foot — ease off to trail-brake) |
+| **R** | Back to the grid (PBs and marks stay) |
 | **Backtick (`)** | Toggle debug overlay |
 | **Gamepad RT / LT** | Throttle / brake |
 | **Gamepad LB** | Clutch |
@@ -71,7 +76,8 @@ src/
 ├── Customizer.svelte     — engine config picker + audio loader
 ├── Sim.svelte            — main loop, input handling (keyboard/mouse/touch/gamepad)
 ├── Tachometer.svelte     — DPR-aware canvas analog gauge
-├── CylinderBank.svelte   — SVG cylinder bank with firing-order animation
+├── TrackView.svelte      — canvas host for the track renderer
+├── TrackHud.svelte       — lap/sector/delta/streak HUD + banners
 ├── GearIndicator.svelte  — gear letter + speed display
 ├── Odometer.svelte       — distance counter (localStorage persistence)
 ├── DebugOverlay.svelte   — debug panel with bars, sparkline, status pills
@@ -80,6 +86,16 @@ src/
 │   ├── drivetrain.js     — physics: torque, gears, clutch, turbo, spring-damper
 │   ├── audio.js          — 13-layer Web Audio engine + exhaust reverb + turbo whine
 │   └── tokens.js         — color token system (JS exports + CSS vars)
+├── track/
+│   ├── geometry.js       — Monza as straights + arcs, loop closure, corners
+│   ├── racingLine.js     — minimum-curvature line, curvature, speed limits/profile
+│   ├── dynamics.js       — tyres: friction circle, weight transfer, slides, spins, runoff
+│   ├── timing.js         — laps, sectors, delta, ghost trace, corner grading
+│   ├── session.js        — frame orchestration, marks (skids/trail/brake points), records
+│   ├── autopilot.js      — reference driver (tests, playtests)
+│   ├── render.js         — top-down canvas renderer, camera, FX, minimap, g-g meter
+│   ├── storage.js        — safe localStorage for PBs
+│   └── __tests__/
 │   └── __tests__/        — vitest test suites
 └── main.js               — Svelte mount point
 ```

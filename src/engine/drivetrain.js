@@ -371,6 +371,20 @@ export class Drivetrain {
     return Math.max(0, Math.min(1, x)) * this._lastThrottle;
   }
 
+  /** Park the car: stationary, neutral, idling (track reset to the grid). */
+  stop() {
+    this.speed = 0;
+    this.gear = 0;
+    this.rpm = this._idleRPM;
+    this._cancelEngagement();
+    this._wheelOmega = 0;
+    this.boostPsi = 0;
+    this._turboShaftRPS = 0;
+    this._bovActive = false;
+    this._limiterTimer = 0;
+    this.revLimiterActive = false;
+  }
+
   /** Peak brake deceleration the brakes can deliver (m/s²), before tyre grip limits. */
   get brakeDecel() {
     return this._brakeDecel;

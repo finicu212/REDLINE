@@ -9,15 +9,16 @@ function race(profile, { laps = 2, margin = 0.93, record = null } = {}) {
   const dt = new Drivetrain(profile);
   const session = new RaceSession(profile, { record });
   const ap = new Autopilot(session, profile, { margin });
-  const done = [], counts = {};
+  const done = [], counts = {}, corners = [];
   for (let t = 0; t < 420 && done.length < laps; t += 1 / 60) {
     session.step(1 / 60, dt, ap.drive(dt));
     for (const e of session.feed) if (e.t === session.time) {
       counts[e.type] = (counts[e.type] || 0) + 1;
       if (e.type === 'lap') done.push(e);
+      if (e.type === 'corner') corners.push(e);
     }
   }
-  return { session, laps: done, counts, dt };
+  return { session, laps: done, counts, dt, corners };
 }
 
 describe('RaceSession — every car laps Monza cleanly with a sane driver', () => {
@@ -41,7 +42,7 @@ describe('RaceSession — every car laps Monza cleanly with a sane driver', () =
 });
 
 describe('RaceSession — feedback plumbing', () => {
-  const { session, laps, counts } = race(PROFILES.v8_3, { laps: 2 });
+  const { session, laps, counts, corners } = race(PROFILES.v8_3, { laps: 2 });
 
   it('grades all seven corners every lap and fires sectors + speed trap', () => {
     expect(counts.corner).toBe(14);
@@ -66,6 +67,24 @@ describe('RaceSession — feedback plumbing', () => {
     expect(session.lastTrail.length / 3).toBeGreaterThan(1000);
     const usage = session.lastTrail.filter((_, i) => i % 3 === 2);
     expect(Math.max(...usage)).toBeGreaterThan(0.7);
+  });
+
+  it('lap events summarise the grades; ideal lap = sum of best sectors', () => {
+    const counts = laps[1].grades;
+    expect(Object.values(counts).reduce((a, b) => a + b, 0)).toBe(7);
+    const b = session.timer.bestSectors;
+    expect(session.idealLap).toBeCloseTo(b[0] + b[1] + b[2], 6);
+    expect(session.idealLap).toBeLessThanOrEqual(session.timer.bestLap + 1e-6);
+  });
+
+  it('second-lap corner grades report braking distance vs the PB lap', () => {
+    const lap1 = corners.slice(0, 7), lap2 = corners.slice(7);
+    expect(lap1.every(c => c.brakeVsPB == null)).toBe(true);        // no PB yet
+    const compared = lap2.filter(c => c.brakeVsPB != null);
+    expect(compared.length).toBeGreaterThanOrEqual(5);
+    // same driver, same car: brake points repeat within a few meters — except Rettifilo,
+    // where lap 1 arrives slower from the standing start and brakes later
+    for (const c of compared.filter(c => c.name !== 'Rettifilo')) expect(Math.abs(c.brakeVsPB)).toBeLessThan(25);
   });
 
   it('record() round-trips into a fresh session', () => {

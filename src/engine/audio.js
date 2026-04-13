@@ -74,6 +74,12 @@ const LIMITER_LOOP_HOLD_S = 0.15;
 const LIMITER_POP_MS = 45;
 const LIMITER_POP_LEVEL = 0.35;
 
+// Tyres / surfaces
+const TYRE_SQUEAL_LEVEL = 0.16;
+const GRAVEL_LEVEL = 0.22;
+const KERB_LEVEL = 0.3;
+const KERB_STRIPE_M = 1.5;          // one red+white pair passes every ~1.5 m
+
 // Roots blower whine: 2 rotors × 3 lobes pass the outlet 6 times per rotor rev
 const SC_LOBE_PASSES_PER_REV = 6;
 const SC_WHINE_LEVEL = 0.05;
@@ -559,6 +565,7 @@ export class EngineAudio {
     this._stopLimiter();
     this._stopTransmission();
     this._stopSupercharger();
+    this._stopTyres();
     this._stopDecelLayers();
     if (this.ctx) {
       this.masterGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.05);
@@ -903,6 +910,146 @@ export class EngineAudio {
     const level = SC_WHINE_LEVEL * (0.25 + 0.75 * boost) * (0.5 + 0.5 * Math.min(1, rpm / 6000));
     this._scGain.gain.setTargetAtTime(level, now, 0.04);
     this.debugScWhineHz = hz;
+  }
+
+  // === Tyres & surfaces (track) ===
+
+  /**
+   * Tyre and surface sounds from the track sim: squeal that starts *before* the limit
+   * (the warning a driver listens for), a higher screech when locked, gravel crunch,
+   * kerb rumble pulsed at the stripe rate, a thump on barrier hits.
+   * @param {object} car - CarDynamics
+   * @param {object[]} feed - session feed (for one-shot events)
+   * @param {number} time - session time
+   */
+  setTyreState(car, feed = [], time = 0) {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    if (!this._tyres) this._initTyres(now);
+    const t = this._tyres;
+    const v = car.v || 0;
+    const speed = Math.min(1, v / 25);
+
+    const squeal = car.squeal || 0;
+    const locked = car.locked ? 1 : 0;
+    const wobble = Math.sin(time * 23) * 30 + Math.sin(time * 7.3) * 20;
+    const pitch = 900 + squeal * 450 + locked * 500 + wobble;
+    t.oscA.frequency.setTargetAtTime(pitch, now, 0.03);
+    t.oscB.frequency.setTargetAtTime(pitch * 1.047, now, 0.03);
+    t.squealFilter.frequency.setTargetAtTime(pitch * 1.3, now, 0.03);
+    const squealLevel = TYRE_SQUEAL_LEVEL * Math.pow(Math.max(squeal, locked), 1.4) * speed;
+    t.squealGain.gain.setTargetAtTime(Number.isFinite(squealLevel) ? squealLevel : 0, now, 0.04);
+
+    const gravel = car.surface === 'runoff' ? speed : 0;
+    t.gravelGain.gain.setTargetAtTime(GRAVEL_LEVEL * gravel * (0.7 + Math.random() * 0.6), now, 0.02);
+
+    const kerb = car.surface === 'kerb' ? speed : 0;
+    t.kerbLfo.frequency.setTargetAtTime(Math.max(2, v / KERB_STRIPE_M), now, 0.02);
+    t.kerbGain.gain.setTargetAtTime(KERB_LEVEL * kerb, now, 0.02);
+
+    for (const e of feed) {
+      if (e.t <= (this._tyreFeedSeen ?? -1)) continue;
+      this._tyreFeedSeen = e.t;
+      if (e.type === 'wall') this._playImpact(now);
+    }
+  }
+
+  _initTyres(now) {
+    const ctx = this.ctx;
+    const len = Math.round(ctx.sampleRate * 2);
+    const noise = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d = noise.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    const noiseSource = () => {
+      const src = ctx.createBufferSource();
+      src.buffer = noise;
+      src.loop = true;
+      src.start(now, Math.random());
+      return src;
+    };
+
+    // Squeal: two detuned triangles beating + a band of noise, through a resonant bandpass
+    const squealFilter = ctx.createBiquadFilter();
+    squealFilter.type = 'bandpass';
+    squealFilter.Q.value = 5;
+    const squealGain = ctx.createGain();
+    squealGain.gain.value = 0;
+    squealFilter.connect(squealGain);
+    squealGain.connect(this.masterGain);
+    const oscA = ctx.createOscillator(), oscB = ctx.createOscillator();
+    oscA.type = oscB.type = 'triangle';
+    oscA.connect(squealFilter);
+    oscB.connect(squealFilter);
+    oscA.start(now); oscB.start(now);
+    const squealNoise = noiseSource();
+    const noiseLevel = ctx.createGain();
+    noiseLevel.gain.value = 0.6;
+    squealNoise.connect(noiseLevel);
+    noiseLevel.connect(squealFilter);
+
+    // Gravel: low, crunchy noise
+    const gravelFilter = ctx.createBiquadFilter();
+    gravelFilter.type = 'lowpass';
+    gravelFilter.frequency.value = 700;
+    const gravelGain = ctx.createGain();
+    gravelGain.gain.value = 0;
+    noiseSource().connect(gravelFilter);
+    gravelFilter.connect(gravelGain);
+    gravelGain.connect(this.masterGain);
+
+    // Kerb: rumble gated by a square LFO at the stripe-passing rate
+    const kerbFilter = ctx.createBiquadFilter();
+    kerbFilter.type = 'lowpass';
+    kerbFilter.frequency.value = 220;
+    const kerbGate = ctx.createGain();
+    kerbGate.gain.value = 0.5;
+    const kerbLfo = ctx.createOscillator();
+    kerbLfo.type = 'square';
+    const lfoDepth = ctx.createGain();
+    lfoDepth.gain.value = 0.5;
+    kerbLfo.connect(lfoDepth);
+    lfoDepth.connect(kerbGate.gain);
+    kerbLfo.start(now);
+    const kerbGain = ctx.createGain();
+    kerbGain.gain.value = 0;
+    noiseSource().connect(kerbFilter);
+    kerbFilter.connect(kerbGate);
+    kerbGate.connect(kerbGain);
+    kerbGain.connect(this.masterGain);
+
+    this._tyres = { oscA, oscB, squealFilter, squealGain, gravelGain, kerbLfo, kerbGain, noise };
+  }
+
+  _playImpact(now) {
+    const ctx = this.ctx;
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = 70;
+    osc.frequency.setTargetAtTime(35, now, 0.05);
+    const g = ctx.createGain();
+    g.gain.value = 0.5;
+    g.gain.setTargetAtTime(0, now + 0.02, 0.08);
+    osc.connect(g);
+    g.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 0.5);
+    if (this._tyres) {
+      const src = ctx.createBufferSource();
+      src.buffer = this._tyres.noise;
+      const ng = ctx.createGain();
+      ng.gain.value = 0.35;
+      ng.gain.setTargetAtTime(0, now + 0.01, 0.06);
+      src.connect(ng);
+      ng.connect(this.masterGain);
+      src.start(now);
+      src.stop(now + 0.4);
+    }
+  }
+
+  _stopTyres() {
+    if (!this._tyres) return;
+    const now = this.ctx.currentTime;
+    for (const g of [this._tyres.squealGain, this._tyres.gravelGain, this._tyres.kerbGain]) g.gain.setTargetAtTime(0, now, 0.03);
   }
 
   _playLimiterPop(now) {
