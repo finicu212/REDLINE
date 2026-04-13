@@ -371,6 +371,35 @@ export class Drivetrain {
     return Math.max(0, Math.min(1, x)) * this._lastThrottle;
   }
 
+  /** Peak brake deceleration the brakes can deliver (m/s²), before tyre grip limits. */
+  get brakeDecel() {
+    return this._brakeDecel;
+  }
+
+  /**
+   * Bleed road speed (tyres sliding, gravel, traction control). Keeps RPM tied to the
+   * wheels when in gear, exactly like braking does.
+   * @param {number} dv - m/s to remove
+   */
+  scrubSpeed(dv) {
+    if (!(dv > 0) || this.speed <= 0) return;
+    this._setWheelSpeed(Math.max(0, this.speed / 3.6 - dv));
+    this._guardFinite();
+  }
+
+  /** @private Set road speed (m/s) and keep the coupled side of the drivetrain in sync. */
+  _setWheelSpeed(speedMS) {
+    this.speed = speedMS * 3.6;
+    if (this.gear === 0) return;
+    const totalRatio = this._gearRatios[this.gear] * this._finalDrive;
+    const coupled = !this.clutchHeld && !this._clutchEngaging;
+    if (coupled) {
+      this.rpm = Math.max(this._idleRPM, (speedMS / this._tireCircumference) * 60 * totalRatio);
+    } else if (this._clutchEngaging) {
+      this._wheelOmega = Math.max(0, (speedMS / this._tireCircumference) * 2 * Math.PI * totalRatio);
+    }
+  }
+
   /** @private Fuel cut per the profile's limiter style. */
   _updateRevLimiter(dt) {
     const { style, cutMs = 0 } = this._limiter;
@@ -437,9 +466,10 @@ export class Drivetrain {
    * Update physics. Call every frame.
    * @param {number} dt - delta time in seconds
    * @param {number} throttle - throttle position 0–1
-   * @param {boolean} braking - true if brake is applied
+   * @param {boolean|number} braking - true / pedal 0–1
+   * @param {number} [brakeDecelOverride] - m/s² actually delivered (grip-limited by the track sim)
    */
-  update(dt, throttle, braking = false) {
+  update(dt, throttle, braking = false, brakeDecelOverride) {
     if (!(dt > 0)) return; // NaN, zero, or negative (rAF timestamp before first performance.now())
     dt = Math.min(dt, 0.05);
     throttle = Number(throttle);
@@ -591,19 +621,9 @@ export class Drivetrain {
 
     // Braking: decelerates the vehicle (wheels), not the engine directly.
     if (braking && this.speed > 0) {
-      const speedMS = this.speed / 3.6;
-      const newSpeedMS = Math.max(0, speedMS - this._brakeDecel * dt);
-      this.speed = newSpeedMS * 3.6;
-
-      // In gear: sync RPM to the braked wheel speed
-      if (coupled) {
-        const brakedWheelRPS = newSpeedMS / this._tireCircumference;
-        const brakedRPM = brakedWheelRPS * 60 * totalRatio;
-        this.rpm = Math.max(this._idleRPM, brakedRPM);
-      } else if (this._clutchEngaging) {
-        // Braking affects wheel side during clutch engagement
-        this._wheelOmega = Math.max(0, (newSpeedMS / this._tireCircumference) * 2 * Math.PI * totalRatio);
-      }
+      const pedal = typeof braking === 'number' ? Math.max(0, Math.min(1, braking)) : 1;
+      const decel = Number.isFinite(brakeDecelOverride) ? brakeDecelOverride : this._brakeDecel * pedal;
+      this._setWheelSpeed(Math.max(0, this.speed / 3.6 - decel * dt));
     }
 
     this._guardFinite();

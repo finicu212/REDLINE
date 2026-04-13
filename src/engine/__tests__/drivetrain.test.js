@@ -768,3 +768,38 @@ describe('Drivetrain — Roots supercharger', () => {
     expect(run(p, 0)).toBeLessThan(run(na, 0)); // more engine braking from the rotors
   });
 });
+
+describe('Drivetrain — track hooks', () => {
+  const inGear = () => {
+    const dt = new Drivetrain();
+    dt.shiftUp(); dt.shiftUp();
+    for (let i = 0; i < 200; i++) dt.update(1 / 60, 1);
+    return dt;
+  };
+
+  it('brake override replaces the fixed brake decel (grip-limited braking)', () => {
+    const a = inGear(), b = inGear();
+    const v0 = a.speed;
+    a.update(0.1, 0, true);          // full brakes
+    b.update(0.1, 0, true, 2.0);     // tyres only allow 2 m/s²
+    expect(v0 - a.speed).toBeGreaterThan(v0 - b.speed);
+    expect((v0 - b.speed) / 3.6).toBeLessThan(0.35);
+  });
+
+  it('analog pedal scales brake decel', () => {
+    const a = inGear(), b = inGear();
+    const v0 = a.speed;
+    a.update(0.1, 0, 1);
+    b.update(0.1, 0, 0.25);
+    expect(v0 - b.speed).toBeLessThan((v0 - a.speed) * 0.5);
+  });
+
+  it('scrubSpeed slows the car and keeps RPM tied to the wheels in gear', () => {
+    const dt = inGear();
+    const ratio = dt.speed / dt.rpm;
+    dt.scrubSpeed(5);
+    expect(dt.speed / dt.rpm).toBeCloseTo(ratio, 5);
+    dt.scrubSpeed(-3); dt.scrubSpeed(NaN); // ignored
+    expect(Number.isFinite(dt.speed)).toBe(true);
+  });
+});
