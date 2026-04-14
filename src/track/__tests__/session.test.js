@@ -223,11 +223,11 @@ describe('RaceSession — coach', () => {
 describe('RaceSession — corner records', () => {
   const grade = (vMin, tone = 'great', name = 'Lesmo 1') => ({ type: 'corner', name, grade: 'GREAT', tone, vMin });
 
-  it('first clean pass sets the record, a faster one beats it, a slide never does', () => {
+  it('first clean pass sets a silent baseline, a faster one beats it, a slide never does', () => {
     const s = new RaceSession(PROFILES.v6_1, { record: null });
     const a = grade(30); s._cornerRecord(a);
-    expect(a.cornerRecord).toBe(true);
-    expect(a.recordGain).toBeNull();
+    expect(a.cornerRecord).toBeUndefined();
+    expect(s.cornerBests['Lesmo 1']).toBe(30);
     const slower = grade(29.9); s._cornerRecord(slower);
     expect(slower.cornerRecord).toBeUndefined();
     const hot = grade(33, 'warn'); s._cornerRecord(hot);
@@ -244,4 +244,34 @@ describe('RaceSession — corner records', () => {
     const again = new RaceSession(PROFILES.v6_1, { record: JSON.parse(JSON.stringify(s.record())) });
     expect(again.cornerBests.Ascari).toBe(28);
   });
+});
+
+describe('RaceSession — coach stays quiet for clean driving', () => {
+  it('454 (no ABS, fixed bias) trail-braked at 93%: the only tip is the right one', () => {
+    const p = PROFILES.v8_2;
+    const dt = new Drivetrain(p);
+    const session = new RaceSession(p, { record: null });
+    const ap = new Autopilot(session, p, { margin: 0.93 });
+    const tips = new Set();
+    for (let t = 0; t < 200; t += 1 / 60) {
+      session.step(1 / 60, dt, ap.drive(dt));
+      for (const e of session.feed) if (e.t === session.time && e.type === 'coach') tips.add(e.id);
+    }
+    for (const t of tips) expect(['trailOver', 'wheelspin']).toContain(t);
+  }, 20000);
+
+  for (const id of ['i4_3', 'v6_1', 'v8_1', 'v8_3', 'i4_na']) {
+    it(`${id}: a clean autopilot lap earns no slide tips`, () => {
+      const p = PROFILES[id];
+      const dt = new Drivetrain(p);
+      const session = new RaceSession(p, { record: null });
+      const ap = new Autopilot(session, p, { margin: 0.93 });
+      const tips = [];
+      for (let t = 0; t < 200; t += 1 / 60) {
+        session.step(1 / 60, dt, ap.drive(dt));
+        for (const e of session.feed) if (e.t === session.time && e.type === 'coach') tips.push(e.id);
+      }
+      expect(tips.filter(t => t !== 'wheelspin')).toEqual([]);
+    }, 20000);
+  }
 });

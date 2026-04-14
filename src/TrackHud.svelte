@@ -410,7 +410,7 @@
     to { opacity: 0; transform: translateY(-8px); }
   }
 
-  @media (max-width: 600px) {
+  @media (max-width: 600px), (max-height: 449px) {
     .timing { min-width: 0; width: 132px; padding: 5px 7px; top: 8px; left: 8px; }
     .clock { font-size: 1.05rem; }
     .delta { font-size: 0.8rem; }

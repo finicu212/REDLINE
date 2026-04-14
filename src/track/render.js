@@ -237,7 +237,7 @@ export class TrackRenderer {
     this.dpr = Math.min(dpr || 1, 2);
     this.W = cssW; this.H = cssH;
     // Phones: smaller map, no g-g meter (the touch buttons live in that corner)
-    this.compact = cssW < 600;
+    this.compact = cssW <= 600 || cssH < 450; // matches TrackHud's @media; landscape phones too
     const miniSize = this.compact ? 104 : 170;
     if (this.mini.size !== miniSize) this._buildMinimap(miniSize);
     this.canvas.width = Math.round(cssW * this.dpr);

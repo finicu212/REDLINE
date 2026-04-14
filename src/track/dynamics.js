@@ -31,7 +31,10 @@ const LOCKED_SLIDE_MU = 0.8;      // sliding rubber grips less than peak
 const ABS_EFFICIENCY = 0.96;
 const SPIN_YAW = 0.85;            // rad of slip angle that becomes a spin
 const ESC_MAX_YAW = 0.25;
-const TC_TARGET = 0.95;           // traction control keeps driven-axle usage at this         // rad — stability control never lets a slide grow past this
+const TC_TARGET = 0.95;           // traction control keeps driven-axle usage at this
+// Slide amount = missing cornering / asked-for cornering. Near-straight, "asked-for" is ~0,
+// so a tiny deficit would read as a full slide — normalise by at least this (m/s²)
+const SLIDE_NORM_FLOOR = 3;         // rad — stability control never lets a slide grow past this
 const SPIN_TIME = 1.3;            // s
 const SPIN_DECEL = 7;             // m/s² while spinning
 const DRIVER_OMEGA = 1.1;         // rad/s — how firmly the "driver" pulls back to the line
@@ -228,13 +231,13 @@ export class CarDynamics {
       const deficit = Math.abs(aLatDemand) - latCap;
       if (latCapF <= latCapR) {
         // Understeer: front washes out, car drifts to the outside
-        this.understeer = Math.min(1, deficit / Math.abs(aLatDemand));
+        this.understeer = Math.min(1, deficit / Math.max(Math.abs(aLatDemand), SLIDE_NORM_FLOOR));
         this.vd += turnSign * deficit * dt;
         this.yaw += (0 - this.yaw) * Math.min(1, dt * 3);
         scrub += 0.3 * deficit * dt;
       } else {
         // Oversteer: rear steps out, nose rotates into the corner, car slides wide a bit
-        this.oversteer = Math.min(1, deficit / Math.abs(aLatDemand));
+        this.oversteer = Math.min(1, deficit / Math.max(Math.abs(aLatDemand), SLIDE_NORM_FLOOR));
         // Stability control brakes single wheels to kill yaw: slides stay small, never spin
         const yawGain = c.tc ? 0.35 : 1;
         this.yaw += -turnSign * (deficit / Math.max(8, v)) * 2.2 * yawGain * dt;

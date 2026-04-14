@@ -19,6 +19,8 @@ const FEED_TTL = 6;              // s a feed event stays readable
 const COACH_GAP_S = 6;           // min time between any two coaching tips
 const CORNER_RECORD_MARGIN = 0.14; // m/s (~0.5 km/h) needed to beat a corner record
 const COACH_REPEAT_S = 30;       // min time before the same tip repeats
+const COACH_SLIDE = 0.4;         // slide amount that's a clear mistake, not the car working at the limit
+const COACH_YAW = 0.06;          // rad — oversteer tips need a slide you can see
 
 /**
  * Mistakes the car can tell apart, with the one line that explains them.
@@ -28,13 +30,15 @@ export const COACH_TIPS = [
   { id: 'lock', hold: 0.15, title: 'LOCK-UP', text: 'locked fronts can\'t steer — ease off the brake',
     when: (c) => c.locked },
   { id: 'entry', hold: 0.2, title: 'TOO FAST IN', text: 'brake earlier, turn in while easing off',
-    when: (c, thr, brk) => c.understeer > 0.3 && brk > 0.2 },
+    when: (c, thr, brk) => c.understeer > COACH_SLIDE && brk > 0.2 },
   { id: 'powerUnder', hold: 0.25, title: 'POWER UNDERSTEER', text: 'wait for the exit before full throttle',
-    when: (c, thr) => c.understeer > 0.3 && thr > 0.5 && c.aLong > 0 },
+    when: (c, thr) => c.understeer > COACH_SLIDE && thr > 0.5 && c.aLong > 0 },
   { id: 'liftOver', hold: 0.15, title: 'LIFT-OFF OVERSTEER', text: 'weight jumped forward, the rear went light',
-    when: (c, thr) => c.oversteer > 0.25 && thr < 0.2 },
+    when: (c, thr, brk) => c.oversteer > COACH_SLIDE && Math.abs(c.yaw) > COACH_YAW && thr < 0.2 && brk < 0.1 },
+  { id: 'trailOver', hold: 0.15, title: 'TRAIL-BRAKE OVERSTEER', text: 'too much brake while turning — ease off as you turn in',
+    when: (c, thr, brk) => c.oversteer > COACH_SLIDE && Math.abs(c.yaw) > COACH_YAW && brk > 0.2 },
   { id: 'powerOver', hold: 0.15, title: 'POWER OVERSTEER', text: 'squeeze the throttle, don\'t stab it',
-    when: (c, thr) => c.oversteer > 0.25 && thr > 0.5 },
+    when: (c, thr) => c.oversteer > COACH_SLIDE && Math.abs(c.yaw) > COACH_YAW && thr > 0.5 },
   { id: 'wheelspin', hold: 0.3, title: 'WHEELSPIN', text: 'short-shift or feed the throttle in',
     when: (c) => c.wheelspin > 0.4 },
 ];
@@ -192,7 +196,7 @@ export class RaceSession {
   _onTiming(e) {
     // A purple sector improves the ideal lap even when the lap isn't a PB — keep it
     const purple = e.type === 'sector' ? e.color === 'purple' : e.lastSector?.color === 'purple';
-    if (purple && this._persist) saveRecord(this.carId, this.record());
+    if (purple && !e.pb && this._persist) saveRecord(this.carId, this.record()); // a PB saves below
     if (e.type === 'lap') {
       if (e.pb) this.pbBrakePoints = { ...this.grader.brakePoints };
       this.grader.lapDone();
@@ -262,16 +266,16 @@ export class RaceSession {
     if (i) this.feed.splice(0, i);
   }
 
-  /** Back to the grid for a fresh attempt. PBs, skid marks and grades stay — they're earned. */
   /** Faster through a corner than ever before, without sliding or going off? Mark it. */
   _cornerRecord(grade) {
     const clean = grade.tone !== 'bad' && grade.tone !== 'warn';
     if (!clean || grade.grade === 'FLAT OUT' || grade.grade === 'LIFTED') return;
     const best = this.cornerBests[grade.name];
     if (best != null && grade.vMin <= best + CORNER_RECORD_MARGIN) return;
-    grade.cornerRecord = true;
-    grade.recordGain = best == null ? null : grade.vMin - best;
     this.cornerBests[grade.name] = grade.vMin;
+    if (best == null) return; // first clean pass just sets the baseline — nothing beaten yet
+    grade.cornerRecord = true;
+    grade.recordGain = grade.vMin - best;
     if (this._persist) saveRecord(this.carId, this.record());
   }
 
@@ -281,6 +285,7 @@ export class RaceSession {
     return b.every(x => x != null) ? b[0] + b[1] + b[2] : null;
   }
 
+  /** Back to the grid for a fresh attempt. PBs, skid marks and grades stay — they're earned. */
   resetToGrid(drivetrain) {
     drivetrain.stop();
     this.car.reset(this.line.length - GRID_BEHIND_LINE);
