@@ -219,3 +219,29 @@ describe('RaceSession — coach', () => {
     expect(s.feed.find(e => e.type === 'coach')?.id).toBe('powerUnder');
   });
 });
+
+describe('RaceSession — corner records', () => {
+  const grade = (vMin, tone = 'great', name = 'Lesmo 1') => ({ type: 'corner', name, grade: 'GREAT', tone, vMin });
+
+  it('first clean pass sets the record, a faster one beats it, a slide never does', () => {
+    const s = new RaceSession(PROFILES.v6_1, { record: null });
+    const a = grade(30); s._cornerRecord(a);
+    expect(a.cornerRecord).toBe(true);
+    expect(a.recordGain).toBeNull();
+    const slower = grade(29.9); s._cornerRecord(slower);
+    expect(slower.cornerRecord).toBeUndefined();
+    const hot = grade(33, 'warn'); s._cornerRecord(hot);
+    expect(hot.cornerRecord).toBeUndefined();
+    const faster = grade(31); s._cornerRecord(faster);
+    expect(faster.cornerRecord).toBe(true);
+    expect(faster.recordGain).toBeCloseTo(1, 5);
+    expect(s.record().cornerBests['Lesmo 1']).toBe(31);
+  });
+
+  it('corner records survive a reload', () => {
+    const s = new RaceSession(PROFILES.v6_1, { record: null });
+    s._cornerRecord(grade(28, 'good', 'Ascari'));
+    const again = new RaceSession(PROFILES.v6_1, { record: JSON.parse(JSON.stringify(s.record())) });
+    expect(again.cornerBests.Ascari).toBe(28);
+  });
+});

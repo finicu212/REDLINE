@@ -618,8 +618,11 @@ export class TrackRenderer {
         if (e.brakeVsPB != null && Math.abs(e.brakeVsPB) >= 3) {
           sub += `  ·  brake ${Math.abs(Math.round(e.brakeVsPB))} m ${e.brakeVsPB > 0 ? 'later' : 'earlier'}`;
         }
-        this.popups.push({ x: a.x, y: a.y, text: e.grade, sub, color: TONE_COLOR[e.tone], t: 0, big: e.tone === 'perfect' });
-        if (e.tone === 'perfect') this._sparkle(a.x, a.y);
+        const record = e.cornerRecord
+          ? (e.recordGain == null ? 'CORNER RECORD' : `CORNER RECORD +${Math.max(1, Math.round(e.recordGain * 3.6))} km/h`)
+          : null;
+        this.popups.push({ x: a.x, y: a.y, text: e.grade, sub, record, color: TONE_COLOR[e.tone], t: 0, big: e.tone === 'perfect' });
+        if (e.tone === 'perfect' || e.cornerRecord) this._sparkle(a.x, a.y);
       } else if (e.type === 'wall') {
         this.shake = 1;
         for (let k = 0; k < 10; k++) this.spawn(2, pose.x, pose.y, rand(8), rand(8), 0.5, 0.4, 0.2, 1);
@@ -696,6 +699,12 @@ export class TrackRenderer {
         ctx.strokeText(p.sub, 0, 18);
         ctx.fillStyle = '#f0f0f0';
         ctx.fillText(p.sub, 0, 18);
+      }
+      if (p.record) {
+        ctx.font = `bold 12px 'Share Tech Mono', monospace`;
+        ctx.strokeText(p.record, 0, 34);
+        ctx.fillStyle = T.pbGold;
+        ctx.fillText(p.record, 0, 34);
       }
       ctx.restore();
     }

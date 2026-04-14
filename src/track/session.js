@@ -17,6 +17,7 @@ const TRAIL_STEP = 4;            // m between grip-trail samples
 const SPEEDTRAP_BEFORE = 420;    // m before Rettifilo's entry — ahead of any sane braking point
 const FEED_TTL = 6;              // s a feed event stays readable
 const COACH_GAP_S = 6;           // min time between any two coaching tips
+const CORNER_RECORD_MARGIN = 0.14; // m/s (~0.5 km/h) needed to beat a corner record
 const COACH_REPEAT_S = 30;       // min time before the same tip repeats
 
 /**
@@ -75,6 +76,7 @@ export class RaceSession {
     this.timer = new LapTimer({ length: line.length, sectorEnds: this.sectorEnds, record });
     this.grader = new CornerGrader(this.corners, line.length);
     this.pbBrakePoints = record?.pbBrakePoints ?? {};
+    this.cornerBests = record?.cornerBests ?? {};   // name → best clean min speed (m/s)
     this.bestTopSpeed = record?.topSpeed ?? 0;
 
     const rettifilo = this.corners.find(c => c.name === 'Rettifilo');
@@ -161,6 +163,7 @@ export class RaceSession {
       const pbBrake = this.pbBrakePoints[grade.name];
       // + = braked later (deeper) than on the PB lap
       grade.brakeVsPB = grade.brakeS != null && pbBrake != null ? grade.brakeS - pbBrake : null;
+      this._cornerRecord(grade);
       this._lapGrades.push(grade.tone);
       this._emit(grade);
     }
@@ -260,6 +263,18 @@ export class RaceSession {
   }
 
   /** Back to the grid for a fresh attempt. PBs, skid marks and grades stay — they're earned. */
+  /** Faster through a corner than ever before, without sliding or going off? Mark it. */
+  _cornerRecord(grade) {
+    const clean = grade.tone !== 'bad' && grade.tone !== 'warn';
+    if (!clean || grade.grade === 'FLAT OUT' || grade.grade === 'LIFTED') return;
+    const best = this.cornerBests[grade.name];
+    if (best != null && grade.vMin <= best + CORNER_RECORD_MARGIN) return;
+    grade.cornerRecord = true;
+    grade.recordGain = best == null ? null : grade.vMin - best;
+    this.cornerBests[grade.name] = grade.vMin;
+    if (this._persist) saveRecord(this.carId, this.record());
+  }
+
   /** Sum of best sectors: the lap you've proven you can do. */
   get idealLap() {
     const b = this.timer.bestSectors;
@@ -298,7 +313,8 @@ export class RaceSession {
   }
 
   record() {
-    return { ...this.timer.toRecord(), topSpeed: this.bestTopSpeed, pbBrakePoints: this.pbBrakePoints };
+    return { ...this.timer.toRecord(), topSpeed: this.bestTopSpeed, pbBrakePoints: this.pbBrakePoints,
+      cornerBests: this.cornerBests };
   }
 
   get halfWidth() {

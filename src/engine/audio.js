@@ -962,6 +962,7 @@ export class EngineAudio {
       if (e.type === 'wall') this._playImpact(now);
       else if (e.type === 'lap' && e.pb) this.playChime('pb');
       else if (e.type === 'sector' && e.color === 'purple') this.playChime('purple');
+      else if (e.type === 'corner' && e.cornerRecord && e.recordGain != null) this.playChime('purple');
       else if (e.type === 'corner' && e.tone === 'perfect') this.playChime('perfect');
       else if (e.type === 'invalid') this.playChime('invalid');
     }
