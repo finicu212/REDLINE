@@ -2,12 +2,10 @@
   import { EngineAudio } from './engine/audio.js';
   import { PROFILE_LIST } from './engine/profiles.js';
   import { loadRecord } from './track/storage.js';
+  import { fmtLap } from './track/format.js';
 
   const records = Object.fromEntries(PROFILE_LIST.map(p => [p.id, loadRecord(p.id)]));
-  function fmtLap(t) {
-    const m = Math.floor(t / 60);
-    return `${m}:${(t - m * 60).toFixed(3).padStart(6, '0')}`;
-  }
+
 
   let { onstart } = $props();
 

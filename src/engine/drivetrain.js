@@ -230,6 +230,11 @@ export class Drivetrain {
     this.nanRecoveries = 0;
   }
 
+  /** True only while the clutch spring-damper is engaging (a shift's jolt, not a held pedal). */
+  get isClutchSlipping() {
+    return this._clutchEngaging;
+  }
+
   /** True when engine is decoupled from wheels (clutch held, engaging, or neutral). */
   get isDecoupled() {
     return this.gear === 0 || this.clutchHeld || this._clutchEngaging;
@@ -383,6 +388,8 @@ export class Drivetrain {
     this._bovActive = false;
     this._limiterTimer = 0;
     this.revLimiterActive = false;
+    this._lastGoodSpeed = 0;
+    this._lastGoodRPM = this._idleRPM;
   }
 
   /** Peak brake deceleration the brakes can deliver (m/s²), before tyre grip limits. */

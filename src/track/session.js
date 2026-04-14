@@ -110,20 +110,19 @@ export class RaceSession {
     this.brake = brake;
     const car = this.car;
 
-    const brakeDecel = brake > 0 ? car.brakeDecelFor(brake, drivetrain.brakeDecel) : undefined;
-    drivetrain.update(dt, throttle, brake > 0 ? brake : false, brakeDecel);
+    // Always consult the tyres: releasing the pedal is what unlocks a locked wheel
+    const brakeDecel = car.brakeDecelFor(brake, drivetrain.brakeDecel);
+    drivetrain.update(dt, throttle, brake > 0 ? brake : false, brake > 0 ? brakeDecel : undefined);
 
-    const prevSurface = car.surface;
     const scrub = car.update(dt, { speedMS: drivetrain.speed / 3.6, throttle, brake,
-      clutchSlipping: drivetrain.isDecoupled });
+      clutchSlipping: drivetrain.isClutchSlipping });
     drivetrain.scrubSpeed(scrub);
 
     for (const e of car.events) {
-      if (e.type === 'offtrack' && this.timer.invalidate()) this._emit({ type: 'invalid', reason: 'TRACK LIMITS' });
+      if (e.type === 'offtrack' && this.timer.invalidate()) {
+        this._emit({ type: 'invalid', reason: car.spinTimer > 0 ? 'SPIN' : 'TRACK LIMITS' });
+      }
       this._emit({ ...e, s: car.s });
-    }
-    if (prevSurface !== 'runoff' && car.surface === 'runoff' && car.spinTimer > 0 && this.timer.invalidate()) {
-      this._emit({ type: 'invalid', reason: 'SPIN' });
     }
 
     const prevS = this.timer._prevS;
@@ -147,6 +146,9 @@ export class RaceSession {
   }
 
   _onTiming(e) {
+    // A purple sector improves the ideal lap even when the lap isn't a PB — keep it
+    const purple = e.type === 'sector' ? e.color === 'purple' : e.lastSector?.color === 'purple';
+    if (purple && this._persist) saveRecord(this.carId, this.record());
     if (e.type === 'lap') {
       if (e.pb) this.pbBrakePoints = { ...this.grader.brakePoints };
       this.grader.lapDone();
@@ -229,6 +231,8 @@ export class RaceSession {
     this.timer.running = false;
     this.timer._prevS = null;
     this.timer.t = 0;
+    this.timer.valid = true;
+    this.lapTopSpeed = 0;
     this.trail = [];
     this._trailS = null;
     this._lastSkid = null;

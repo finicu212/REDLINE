@@ -1,5 +1,6 @@
 <script>
   import { untrack } from 'svelte';
+  import { fmtLap as fmt, fmtDelta } from './track/format.js';
 
   /**
    * Time-attack HUD. Reads the session every frame (`tick` changes each frame) and
@@ -14,16 +15,6 @@
   let lastSeen = 0;
   let streakPulse = $state(0);
 
-  function fmt(t, digits = 3) {
-    if (t == null) return '–:––.–––';
-    const m = Math.floor(t / 60);
-    const s = (t - m * 60).toFixed(digits).padStart(digits + 3, '0');
-    return `${m}:${s}`;
-  }
-  function fmtDelta(d) {
-    if (d == null) return '';
-    return `${d < 0 ? '−' : '+'}${Math.abs(d).toFixed(2)}`;
-  }
 
   let view = $derived.by(() => {
     tick; // re-run every frame
@@ -105,7 +96,7 @@
       <span class="lap">{view.running ? `LAP ${view.lap}` : 'OUT LAP'}</span>
       {#if view.running && !view.valid}<span class="tag bad">INVALID</span>{/if}
     </div>
-    <div class="clock" class:invalid={!view.valid}>
+    <div class="clock" class:invalid={view.running && !view.valid}>
       {view.running ? fmt(view.time) : 'CROSS THE LINE'}
     </div>
     {#if view.delta != null}

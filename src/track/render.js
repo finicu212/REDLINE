@@ -111,13 +111,13 @@ export class TrackRenderer {
     this.stands = [];
     for (let s = -520; s <= 420; s += 90) {
       const p = sampleLine(line, s);
-      const off = TRACK_HALF_WIDTH + 22 - p.offset;
+      const off = TRACK_HALF_WIDTH + 22 + p.offset;
       this.stands.push({ x: p.x - p.nx * off, y: p.y - p.ny * off, h: p.heading, w: 70, d: 14 });
     }
     this.pits = [];
     for (let s = -480; s <= 380; s += 110) {
       const p = sampleLine(line, s);
-      const off = TRACK_HALF_WIDTH + 34 + p.offset;
+      const off = TRACK_HALF_WIDTH + 34 - p.offset;
       this.pits.push({ x: p.x + p.nx * off, y: p.y + p.ny * off, h: p.heading, w: 100, d: 18 });
     }
 

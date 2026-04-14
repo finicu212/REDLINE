@@ -132,3 +132,67 @@ describe('RaceSession — marks and limits', () => {
     expect(session.timer.running).toBe(true);
   });
 });
+
+describe('RaceSession — review regressions', () => {
+  const brakingInCorner = (p) => {
+    const dt = new Drivetrain(p);
+    const session = new RaceSession(p, { record: null });
+    const ap = new Autopilot(session, p);
+    // drive until mid-Rettifilo braking zone, then stamp on the brakes
+    const target = session.corners[0].sEntry - 20;
+    for (let t = 0; t < 60 && !(session.car.s > target && session.car.s < target + 50); t += 1 / 60) {
+      session.step(1 / 60, dt, ap.drive(dt));
+    }
+    return { dt, session };
+  };
+
+  it('releasing the brake unlocks a locked wheel (no-ABS car)', () => {
+    const p = PROFILES.v6_2;
+    const { dt, session } = brakingInCorner(p);
+    session.car.aLat = 9; // mid-corner load so full pedal locks
+    session.step(1 / 60, dt, { throttle: 0, brake: 1 });
+    expect(session.car.locked).toBe(true);
+    session.step(1 / 60, dt, { throttle: 0, brake: 0 });
+    expect(session.car.locked).toBe(false);
+  });
+
+  it('braking with the clutch held still transfers weight forward', () => {
+    const p = PROFILES.v8_3;
+    const dt = new Drivetrain(p);
+    const session = new RaceSession(p, { record: null });
+    const ap = new Autopilot(session, p, { margin: 0.9 });
+    for (let t = 0; t < 12; t += 1 / 60) session.step(1 / 60, dt, ap.drive(dt));
+    dt.clutchHeld = true;
+    for (let t = 0; t < 1; t += 1 / 60) session.step(1 / 60, dt, { throttle: 0, brake: 1 });
+    expect(session.car.aLong).toBeLessThan(-6);
+    expect(session.car.front).toBeGreaterThan(p.chassis.frontWeight + 0.1);
+  });
+
+  it('spinning into the gravel is reported as SPIN, not track limits', () => {
+    const p = PROFILES.v8_2;
+    const dt = new Drivetrain(p);
+    const session = new RaceSession(p, { record: null });
+    session.timer._startLap();
+    session.timer._prevS = session.car.s;
+    dt.shiftUp(); dt.speed = 80;
+    session.car.spinTimer = 1;
+    session.car.vd = 600; // leaves the track within this frame
+    session.step(1 / 60, dt, { throttle: 0, brake: 0 });
+    const inv = session.feed.find(e => e.type === 'invalid');
+    expect(inv?.reason).toBe('SPIN');
+  });
+
+  it('reset to grid clears the aborted lap: validity, top speed', () => {
+    const p = PROFILES.v8_3;
+    const dt = new Drivetrain(p);
+    const session = new RaceSession(p, { record: null });
+    const ap = new Autopilot(session, p);
+    for (let t = 0; t < 20; t += 1 / 60) session.step(1 / 60, dt, ap.drive(dt));
+    session.timer.invalidate();
+    session.resetToGrid(dt);
+    expect(session.timer.valid).toBe(true);
+    expect(session.lapTopSpeed).toBe(0);
+    expect(dt.speed).toBe(0);
+    expect(dt.gear).toBe(0);
+  });
+});
