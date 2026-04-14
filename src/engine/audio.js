@@ -150,8 +150,9 @@ function buildFileConfig(profile) {
     revFile: a.rev || DEFAULT_REV_FILE,
     limiterFile: a.limiter || DEFAULT_LIMITER_FILE,
     tranyFile: a.trany || DEFAULT_TRANY_FILE,
-    turboWhineFile: a.turboWhine || DEFAULT_TURBO_WHINE_FILE,
-    turboBovFile: a.turboBov || DEFAULT_TURBO_BOV_FILE,
+    // null = no recording: the synthesized whine / BOV burst is used instead of a 404
+    turboWhineFile: a.turboWhine === undefined ? DEFAULT_TURBO_WHINE_FILE : a.turboWhine,
+    turboBovFile: a.turboBov === undefined ? DEFAULT_TURBO_BOV_FILE : a.turboBov,
   };
 }
 

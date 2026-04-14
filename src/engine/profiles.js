@@ -26,6 +26,8 @@ function bacAudio() {
       { band: 'lowmid',  file: '/audio/tw_offlowmid_4.wav' },
       { band: 'high',    file: '/audio/tw_offhigh_4.wav' },
     ],
+    turboWhine: null, // no turbo recordings ship: synth whine + BOV
+    turboBov: null,
   };
 }
 
