@@ -196,3 +196,26 @@ describe('RaceSession — review regressions', () => {
     expect(dt.gear).toBe(0);
   });
 });
+
+describe('RaceSession — coach', () => {
+  it('names a held mistake once, then respects cooldowns', () => {
+    const s = new RaceSession(PROFILES.v8_3, { record: null });
+    const car = s.car;
+    car.v = 30; car.surface = 'track';
+    const tick = () => { s.time += 1 / 60; s.throttle = 0; s.brake = 1; car.locked = true; s._coach(1 / 60); };
+    for (let i = 0; i < 20; i++) tick();
+    const tips = s.feed.filter(e => e.type === 'coach');
+    expect(tips).toHaveLength(1);
+    expect(tips[0].id).toBe('lock');
+    for (let i = 0; i < 600; i++) tick(); // 10 s later, same mistake: still inside the repeat window
+    expect(s.feed.filter(e => e.type === 'coach')).toHaveLength(1);
+  });
+
+  it('power understeer is told apart from entry understeer', () => {
+    const s = new RaceSession(PROFILES.v8_3, { record: null });
+    const car = s.car;
+    car.v = 20; car.surface = 'track'; car.understeer = 0.6; car.aLong = 3;
+    for (let i = 0; i < 30; i++) { s.time += 1 / 60; s.throttle = 1; s.brake = 0; s._coach(1 / 60); }
+    expect(s.feed.find(e => e.type === 'coach')?.id).toBe('powerUnder');
+  });
+});

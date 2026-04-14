@@ -10,6 +10,8 @@
 
   const SECTOR_COLOR = { purple: 'var(--c-grade-perfect)', green: 'var(--c-grade-great)', yellow: '#f5d142' };
   const BANNER_TTL = { lap: 4.5, pb: 6, sector: 2.2, invalid: 3, speedtrap: 2.6, spin: 2, wall: 1.6 };
+  const COACH_TTL = 4;
+  let coach = $state(null);
 
   let banners = $state([]);
   let lastSeen = 0;
@@ -52,11 +54,13 @@
       for (const e of session.feed) {
         if (e.seq <= lastSeen) continue;
         lastSeen = e.seq;
+        if (e.type === 'coach') { coach = { ...e, t0: now }; continue; }
         const b = toBanner(e);
         if (b) next.push({ ...b, t0: now, id: e.seq });
         if (e.type === 'corner' && e.streak > 0) streakPulse = now;
       }
       if (next.length !== banners.length || next.some((b, i) => b !== banners[i])) banners = next;
+      if (coach && now - coach.t0 > COACH_TTL) coach = null;
     });
   });
 
@@ -143,6 +147,15 @@
         </div>
       {/key}
     </div>
+  {/if}
+
+  {#if coach}
+    {#key coach.seq}
+      <div class="coach">
+        <span class="c-title">{coach.title}</span>
+        <span class="c-text">{coach.text}</span>
+      </div>
+    {/key}
   {/if}
 
   <div class="banners">
@@ -356,6 +369,36 @@
   }
 
   .banner.invalid .b-title { color: var(--c-grade-bad); }
+
+  .coach {
+    position: absolute;
+    bottom: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 0.6rem;
+    align-items: baseline;
+    padding: 6px 14px;
+    border-radius: 999px;
+    background: rgba(10, 12, 20, 0.7);
+    border: 1px solid rgba(255, 179, 0, 0.45);
+    font-size: 0.75rem;
+    white-space: nowrap;
+    animation: coach-in 0.3s ease-out, fadeout 0.6s ease-in 3.4s forwards;
+  }
+
+  .c-title {
+    color: #ffb300;
+    letter-spacing: 0.12em;
+    font-weight: bold;
+  }
+
+  .c-text { color: var(--c-text-secondary); }
+
+  @keyframes coach-in {
+    from { opacity: 0; transform: translate(-50%, 8px); }
+    to { opacity: 1; transform: translate(-50%, 0); }
+  }
 
   @keyframes pop {
     0% { transform: scale(0.7); opacity: 0; }

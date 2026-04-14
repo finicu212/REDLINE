@@ -16,6 +16,27 @@ const SKID_CAPACITY = 24000;     // segments kept for the session (ring buffer)
 const TRAIL_STEP = 4;            // m between grip-trail samples
 const SPEEDTRAP_BEFORE = 420;    // m before Rettifilo's entry — ahead of any sane braking point
 const FEED_TTL = 6;              // s a feed event stays readable
+const COACH_GAP_S = 6;           // min time between any two coaching tips
+const COACH_REPEAT_S = 30;       // min time before the same tip repeats
+
+/**
+ * Mistakes the car can tell apart, with the one line that explains them.
+ * `when` sees the car and the pedals; `hold` = seconds the condition must persist.
+ */
+export const COACH_TIPS = [
+  { id: 'lock', hold: 0.15, title: 'LOCK-UP', text: 'locked fronts can\'t steer — ease off the brake',
+    when: (c) => c.locked },
+  { id: 'entry', hold: 0.2, title: 'TOO FAST IN', text: 'brake earlier, turn in while easing off',
+    when: (c, thr, brk) => c.understeer > 0.3 && brk > 0.2 },
+  { id: 'powerUnder', hold: 0.25, title: 'POWER UNDERSTEER', text: 'wait for the exit before full throttle',
+    when: (c, thr) => c.understeer > 0.3 && thr > 0.5 && c.aLong > 0 },
+  { id: 'liftOver', hold: 0.15, title: 'LIFT-OFF OVERSTEER', text: 'weight jumped forward, the rear went light',
+    when: (c, thr) => c.oversteer > 0.25 && thr < 0.2 },
+  { id: 'powerOver', hold: 0.15, title: 'POWER OVERSTEER', text: 'squeeze the throttle, don\'t stab it',
+    when: (c, thr) => c.oversteer > 0.25 && thr > 0.5 },
+  { id: 'wheelspin', hold: 0.3, title: 'WHEELSPIN', text: 'short-shift or feed the throttle in',
+    when: (c) => c.wheelspin > 0.4 },
+];
 
 let cached = null;
 /** Track + racing line are expensive (~0.5 s) and identical for every car: build once. */
@@ -72,6 +93,9 @@ export class RaceSession {
     this.feed = [];           // { t, ...event } — HUD/renderer read, TTL-pruned
     this._lapGrades = [];
     this._seq = 0;
+    this._coachHeld = {};
+    this._coachLast = {};
+    this._coachAny = -Infinity;
     this.time = 0;
     this.brake = 0;
     this.throttle = 0;
@@ -141,8 +165,25 @@ export class RaceSession {
       this._emit(grade);
     }
 
+    this._coach(dt);
     this._marks();
     this._prune();
+  }
+
+  /** Name the mistake the moment it happens — the game noticed, and says why. */
+  _coach(dt) {
+    const c = this.car;
+    for (const tip of COACH_TIPS) {
+      const on = c.surface !== 'runoff' && c.v > 5 && tip.when(c, this.throttle, this.brake);
+      this._coachHeld[tip.id] = on ? (this._coachHeld[tip.id] || 0) + dt : 0;
+      if (this._coachHeld[tip.id] < tip.hold) continue;
+      if (this.time - this._coachAny < COACH_GAP_S) continue;
+      if (this.time - (this._coachLast[tip.id] ?? -Infinity) < COACH_REPEAT_S) continue;
+      this._coachAny = this.time;
+      this._coachLast[tip.id] = this.time;
+      this._emit({ type: 'coach', id: tip.id, title: tip.title, text: tip.text });
+      break;
+    }
   }
 
   _onTiming(e) {

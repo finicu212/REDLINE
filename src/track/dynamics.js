@@ -39,6 +39,9 @@ const EDGE = TRACK_HALF_WIDTH - 0.9;
 const BARRIER = TRACK_HALF_WIDTH + KERB_WIDTH + RUNOFF_WIDTH;
 const ACCEL_FILTER_S = 0.12;
 const WALL_BOUNCE = 3;            // m/s back toward the track after a barrier hit
+const RUNOFF_DRAG = 4;            // m/s² in the gravel, plus…
+const RUNOFF_DRAG_V2 = 0.008;     // …per (m/s)²
+const RUNOFF_LATERAL_DAMP = 1.5;  // 1/s — sideways speed lost digging into gravel
 
 export class CarDynamics {
   /**
@@ -266,7 +269,10 @@ export class CarDynamics {
     }
     const newSurface = this._surfaceAt(this.s, p.offset + this.d);
     if (newSurface === 'runoff') {
-      scrub += (2.5 + 0.004 * v * v) * dt;
+      // Gravel digs in: heavy drag and sideways momentum bleeds off, so traps actually trap
+      scrub += (RUNOFF_DRAG + RUNOFF_DRAG_V2 * v * v) * dt;
+      // only outward: driving back to the track isn't dug in
+      if (Math.sign(this.vd) === Math.sign(p.offset + this.d)) this.vd *= Math.exp(-dt * RUNOFF_LATERAL_DAMP);
       if (prevSurface !== 'runoff') this.events.push({ type: 'offtrack' });
     } else if (prevSurface === 'runoff') {
       this.events.push({ type: 'rejoin' });
