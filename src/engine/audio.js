@@ -74,6 +74,14 @@ const LIMITER_LOOP_HOLD_S = 0.15;
 const LIMITER_POP_MS = 45;
 const LIMITER_POP_LEVEL = 0.35;
 
+// Feedback chimes: [freq Hz, delay s, level, decay τ s]
+const CHIMES = {
+  pb:      [[880, 0, 0.12, 0.25], [1108.7, 0.1, 0.11, 0.25], [1318.5, 0.2, 0.12, 0.4], [1760, 0.3, 0.06, 0.5]],
+  purple:  [[1318.5, 0, 0.08, 0.15], [1760, 0.08, 0.07, 0.25]],
+  perfect: [[1760, 0, 0.05, 0.12]],
+  invalid: [[330, 0, 0.08, 0.12], [220, 0.12, 0.08, 0.2]],
+};
+
 // Tyres / surfaces
 const TYRE_SQUEAL_LEVEL = 0.16;
 const GRAVEL_LEVEL = 0.22;
@@ -948,9 +956,14 @@ export class EngineAudio {
     t.kerbGain.gain.setTargetAtTime(KERB_LEVEL * kerb, now, 0.02);
 
     for (const e of feed) {
-      if (e.t <= (this._tyreFeedSeen ?? -1)) continue;
-      this._tyreFeedSeen = e.t;
+      const id = e.seq ?? e.t;
+      if (id <= (this._tyreFeedSeen ?? -Infinity)) continue;
+      this._tyreFeedSeen = id;
       if (e.type === 'wall') this._playImpact(now);
+      else if (e.type === 'lap' && e.pb) this.playChime('pb');
+      else if (e.type === 'sector' && e.color === 'purple') this.playChime('purple');
+      else if (e.type === 'corner' && e.tone === 'perfect') this.playChime('perfect');
+      else if (e.type === 'invalid') this.playChime('invalid');
     }
   }
 
@@ -1044,6 +1057,33 @@ export class EngineAudio {
       src.start(now);
       src.stop(now + 0.4);
     }
+  }
+
+  /**
+   * Little bells for good moments (and a soft "bonk" for an invalid lap): the game
+   * saying it noticed. Sine partials with a fast attack and exponential decay.
+   * @param {'pb'|'purple'|'perfect'|'invalid'} kind
+   */
+  playChime(kind) {
+    if (!this.ctx) return;
+    const notes = CHIMES[kind];
+    if (!notes) return;
+    const now = this.ctx.currentTime;
+    for (const [freq, delay, level, decay] of notes) {
+      const t = now + delay;
+      const osc = this.ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      const g = this.ctx.createGain();
+      g.gain.value = 0;
+      g.gain.setTargetAtTime(level, t, 0.004);
+      g.gain.setTargetAtTime(0, t + 0.02, decay);
+      osc.connect(g);
+      g.connect(this.masterGain);
+      osc.start(t);
+      osc.stop(t + decay * 8);
+    }
+    this.debugLastChime = kind;
   }
 
   _stopTyres() {

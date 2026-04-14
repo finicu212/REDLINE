@@ -11,8 +11,8 @@ import { indexAt, sampleLine } from './racingLine.js';
 import * as T from '../engine/tokens.js';
 
 const MAX_PARTICLES = 900;
-const TREE_COUNT = 2600;
-const TREE_CLEARANCE = TRACK_HALF_WIDTH + KERB_WIDTH + RUNOFF_WIDTH + 10;
+const TREE_COUNT = 4200;
+const TREE_CLEARANCE = TRACK_HALF_WIDTH + KERB_WIDTH + RUNOFF_WIDTH + 6;
 const CAR_LEN = 4.5, CAR_WID = 1.95;
 const TONE_COLOR = {
   perfect: T.gradePerfect, great: T.gradeGreat, good: T.gradeGood,
@@ -607,8 +607,8 @@ export class TrackRenderer {
     const feed = this.session.feed;
     // feed is pruned from the front; track by event time
     for (const e of feed) {
-      if (e.t <= this._feedSeen) continue;
-      this._feedSeen = e.t;
+      if (e.seq <= this._feedSeen) continue;
+      this._feedSeen = e.seq;
       if (e.type === 'corner') {
         const a = this.cornerAnchors.find(c => c.name === e.name);
         let sub = e.tone === 'bad' ? '' : `${Math.round(e.vMin * 3.6)} / ${Math.round(e.vLimit * 3.6)} km/h`;

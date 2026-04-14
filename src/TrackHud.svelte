@@ -59,10 +59,10 @@
       const now = session.time;
       const next = banners.filter(b => now - b.t0 < b.ttl);
       for (const e of session.feed) {
-        if (e.t <= lastSeen) continue;
-        lastSeen = e.t;
+        if (e.seq <= lastSeen) continue;
+        lastSeen = e.seq;
         const b = toBanner(e);
-        if (b) next.push({ ...b, t0: now, id: `${e.t}-${e.type}` });
+        if (b) next.push({ ...b, t0: now, id: e.seq });
         if (e.type === 'corner' && e.streak > 0) streakPulse = now;
       }
       if (next.length !== banners.length || next.some((b, i) => b !== banners[i])) banners = next;

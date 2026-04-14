@@ -71,6 +71,7 @@ export class RaceSession {
 
     this.feed = [];           // { t, ...event } — HUD/renderer read, TTL-pruned
     this._lapGrades = [];
+    this._seq = 0;
     this.time = 0;
     this.brake = 0;
     this.throttle = 0;
@@ -205,7 +206,8 @@ export class RaceSession {
   }
 
   _emit(e) {
-    this.feed.push({ t: this.time, ...e });
+    // seq, not t, identifies an event: one frame can emit several (offtrack + invalid)
+    this.feed.push({ t: this.time, seq: ++this._seq, ...e });
   }
 
   _prune() {

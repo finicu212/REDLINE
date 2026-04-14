@@ -95,6 +95,17 @@ describe('RaceSession — feedback plumbing', () => {
   });
 });
 
+describe('RaceSession — feed', () => {
+  it('events from the same frame get distinct, increasing seq numbers', () => {
+    const s = new RaceSession(PROFILES.v8_3, { record: null });
+    s._emit({ type: 'offtrack' });
+    s._emit({ type: 'invalid' });
+    const [a, b] = s.feed;
+    expect(a.t).toBe(b.t);
+    expect(b.seq).toBe(a.seq + 1);
+  });
+});
+
 describe('RaceSession — marks and limits', () => {
   it('leaves skid marks when the tyres slide and invalidates the lap off track', () => {
     const p = PROFILES.v8_2;

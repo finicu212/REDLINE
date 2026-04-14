@@ -829,3 +829,28 @@ describe('EngineAudio — tyres and surfaces', () => {
     expect(ea.ctx.createOscillator.mock.calls.length - before).toBe(1);
   });
 });
+
+describe('EngineAudio — feedback chimes', () => {
+  it('chimes for PB, purple sector, perfect corner and invalid lap; nothing for ordinary events', async () => {
+    vi.stubGlobal('AudioContext', MockAudioContext);
+    vi.stubGlobal('fetch', mockFetch());
+    const ea = new EngineAudio();
+    await ea.init();
+    ea.start();
+    const car = { v: 30, squeal: 0, locked: false, surface: 'track' };
+    const cases = [
+      [{ type: 'lap', pb: true }, 'pb'],
+      [{ type: 'sector', color: 'purple' }, 'purple'],
+      [{ type: 'corner', tone: 'perfect' }, 'perfect'],
+      [{ type: 'invalid' }, 'invalid'],
+    ];
+    cases.forEach(([e, kind], i) => {
+      ea.debugLastChime = null;
+      ea.setTyreState(car, [{ t: i + 1, ...e }], i + 1);
+      expect(ea.debugLastChime).toBe(kind);
+    });
+    ea.debugLastChime = null;
+    ea.setTyreState(car, [{ t: 10, type: 'sector', color: 'yellow' }, { t: 11, type: 'corner', tone: 'good' }], 11);
+    expect(ea.debugLastChime).toBeNull();
+  });
+});
