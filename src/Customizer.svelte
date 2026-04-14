@@ -3,6 +3,14 @@
   import { PROFILE_LIST } from './engine/profiles.js';
   import { loadRecord } from './track/storage.js';
   import { fmtLap } from './track/format.js';
+  import { onMount } from 'svelte';
+  import { getMonza } from './track/session.js';
+
+  // Build the track + racing line (~0.5 s) while the menu idles, not when START is pressed
+  onMount(() => {
+    const id = setTimeout(getMonza, 300);
+    return () => clearTimeout(id);
+  });
 
   const records = Object.fromEntries(PROFILE_LIST.map(p => [p.id, loadRecord(p.id)]));
 

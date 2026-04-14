@@ -411,8 +411,14 @@
   }
 
   @media (max-width: 600px) {
-    .timing { min-width: 130px; padding: 6px 8px; }
-    .clock { font-size: 1.2rem; }
+    .timing { min-width: 0; width: 132px; padding: 5px 7px; top: 8px; left: 8px; }
+    .clock { font-size: 1.05rem; }
+    .delta { font-size: 0.8rem; }
+    .small { font-size: 0.6rem; line-height: 1.35; }
+    .sector { font-size: 0.5rem; }
+    .st { font-size: 0.55rem; }
+    .history { display: none; }
+    .coach { font-size: 0.6rem; white-space: normal; width: 86%; bottom: 8px; }
     .banners { top: 30%; }
     .b-main { font-size: 1.2rem; }
   }

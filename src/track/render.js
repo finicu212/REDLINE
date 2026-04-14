@@ -191,8 +191,7 @@ export class TrackRenderer {
     this.grassPattern = this.ctx.createPattern(c, 'repeat');
   }
 
-  _buildMinimap() {
-    const size = 170;
+  _buildMinimap(size = 170) {
     const { minX, maxX, minY, maxY } = this.bounds;
     const scale = (size - 20) / Math.max(maxX - minX, maxY - minY);
     this.mini = { size, scale, ox: (size - (maxX - minX) * scale) / 2 - minX * scale, oy: (size + (maxY - minY) * scale) / 2 + minY * scale };
@@ -237,6 +236,10 @@ export class TrackRenderer {
   resize(cssW, cssH, dpr) {
     this.dpr = Math.min(dpr || 1, 2);
     this.W = cssW; this.H = cssH;
+    // Phones: smaller map, no g-g meter (the touch buttons live in that corner)
+    this.compact = cssW < 600;
+    const miniSize = this.compact ? 104 : 170;
+    if (this.mini.size !== miniSize) this._buildMinimap(miniSize);
     this.canvas.width = Math.round(cssW * this.dpr);
     this.canvas.height = Math.round(cssH * this.dpr);
   }
@@ -289,7 +292,7 @@ export class TrackRenderer {
     this._drawLabels();
     this._drawPopups(dt);
     this._drawMinimap(pose);
-    this._drawGG(car);
+    if (!this.compact) this._drawGG(car);
   }
 
   _updateCamera(dt, pose, v) {
@@ -703,7 +706,7 @@ export class TrackRenderer {
     const { ctx } = this;
     const s = this.session;
     const { size } = this.mini;
-    const x0 = this.W - size - 12, y0 = 46; // below the CONTROLS button
+    const x0 = this.W - size - 12, y0 = this.compact ? 40 : 46; // below the CONTROLS button
     ctx.save();
     ctx.translate(x0, y0);
     ctx.fillStyle = 'rgba(10,12,20,0.55)';
