@@ -85,7 +85,7 @@
         return { kind: e.record ? 'pb' : 'sector', ttl: BANNER_TTL.speedtrap, title: e.record ? 'SPEED TRAP RECORD' : 'SPEED TRAP',
           main: `${Math.round(e.kmh)} km/h`, sub: '' };
       case 'spin':
-        return { kind: 'invalid', ttl: BANNER_TTL.spin, title: 'SPIN', main: 'CATCH IT NEXT TIME', sub: 'lift gently, brake in a straight line' };
+        return { kind: 'invalid', ttl: BANNER_TTL.spin, title: 'SPIN', main: 'SPUN OUT', sub: '' };
       case 'wall':
         return { kind: 'invalid', ttl: BANNER_TTL.wall, title: 'OUCH', main: 'TYRE WALL', sub: '' };
       default:
@@ -153,7 +153,6 @@
     {#key coach.seq}
       <div class="coach">
         <span class="c-title">{coach.title}</span>
-        <span class="c-text">{coach.text}</span>
       </div>
     {/key}
   {/if}
@@ -393,7 +392,6 @@
     font-weight: bold;
   }
 
-  .c-text { color: var(--c-text-secondary); }
 
   @keyframes coach-in {
     from { opacity: 0; transform: translate(-50%, 8px); }

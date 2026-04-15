@@ -23,23 +23,23 @@ const COACH_SLIDE = 0.4;         // slide amount that's a clear mistake, not the
 const COACH_YAW = 0.06;          // rad — oversteer tips need a slide you can see
 
 /**
- * Mistakes the car can tell apart, with the one line that explains them.
+ * Mistakes the car can tell apart, named as they happen.
  * `when` sees the car and the pedals; `hold` = seconds the condition must persist.
  */
 export const COACH_TIPS = [
-  { id: 'lock', hold: 0.15, title: 'LOCK-UP', text: 'locked fronts can\'t steer — ease off the brake',
+  { id: 'lock', hold: 0.15, title: 'LOCK-UP',
     when: (c) => c.locked },
-  { id: 'entry', hold: 0.2, title: 'TOO FAST IN', text: 'brake earlier, turn in while easing off',
+  { id: 'entry', hold: 0.2, title: 'TOO FAST IN',
     when: (c, thr, brk) => c.understeer > COACH_SLIDE && brk > 0.2 },
-  { id: 'powerUnder', hold: 0.25, title: 'POWER UNDERSTEER', text: 'wait for the exit before full throttle',
+  { id: 'powerUnder', hold: 0.25, title: 'POWER UNDERSTEER',
     when: (c, thr) => c.understeer > COACH_SLIDE && thr > 0.5 && c.aLong > 0 },
-  { id: 'liftOver', hold: 0.15, title: 'LIFT-OFF OVERSTEER', text: 'weight jumped forward, the rear went light',
+  { id: 'liftOver', hold: 0.15, title: 'LIFT-OFF OVERSTEER',
     when: (c, thr, brk) => c.oversteer > COACH_SLIDE && Math.abs(c.yaw) > COACH_YAW && thr < 0.2 && brk < 0.1 },
-  { id: 'trailOver', hold: 0.15, title: 'TRAIL-BRAKE OVERSTEER', text: 'too much brake while turning — ease off as you turn in',
+  { id: 'trailOver', hold: 0.15, title: 'TRAIL-BRAKE OVERSTEER',
     when: (c, thr, brk) => c.oversteer > COACH_SLIDE && Math.abs(c.yaw) > COACH_YAW && brk > 0.2 },
-  { id: 'powerOver', hold: 0.15, title: 'POWER OVERSTEER', text: 'squeeze the throttle, don\'t stab it',
+  { id: 'powerOver', hold: 0.15, title: 'POWER OVERSTEER',
     when: (c, thr) => c.oversteer > COACH_SLIDE && Math.abs(c.yaw) > COACH_YAW && thr > 0.5 },
-  { id: 'wheelspin', hold: 0.3, title: 'WHEELSPIN', text: 'short-shift or feed the throttle in',
+  { id: 'wheelspin', hold: 0.3, title: 'WHEELSPIN',
     when: (c) => c.wheelspin > 0.4 },
 ];
 
@@ -178,7 +178,7 @@ export class RaceSession {
     this._prune();
   }
 
-  /** Name the mistake the moment it happens — the game noticed, and says why. */
+  /** Name the mistake the moment it happens. */
   _coach(dt) {
     const c = this.car;
     for (const tip of COACH_TIPS) {
@@ -189,7 +189,7 @@ export class RaceSession {
       if (this.time - (this._coachLast[tip.id] ?? -Infinity) < COACH_REPEAT_S) continue;
       this._coachAny = this.time;
       this._coachLast[tip.id] = this.time;
-      this._emit({ type: 'coach', id: tip.id, title: tip.title, text: tip.text });
+      this._emit({ type: 'coach', id: tip.id, title: tip.title });
       break;
     }
   }
