@@ -56,6 +56,7 @@ const TURBO_MAX_PSI = 14.7;          // peak manifold pressure (1 bar gauge)
 const TURBO_WASTEGATE_PSI = 14.7;    // wastegate cracks open here
 const TURBO_BOOST_MULTIPLIER = 0.6;  // torque multiplier at peak boost
 const TURBO_FRICTION = 0.012;        // shaft bearing friction coefficient
+const TURBO_SUBSTEP_S = 0.001;       // s — turbo integration step (stable at any frame rate)
 const PSI_PER_BAR = 14.504;
 const SUPERCHARGER_RESPONSE_S = 0.06; // manifold fill time — effectively instant vs a turbo
 const MAX_INTAKE_VACUUM_BAR = 0.7;   // closed-throttle manifold vacuum (petrol)
@@ -712,6 +713,20 @@ export class Drivetrain {
    * BOV vents manifold on throttle lift.
    */
   _updateTurbo(dt, throttle) {
+    // --- BOV logic ---
+    const throttleDrop = this._prevThrottle - throttle;
+    if (this._turbo.bov && throttleDrop > 0.15 && this.boostPsi > BOV_THRESHOLD_PSI) {
+      this._bovActive = true;
+    }
+    // The shaft is tiny and the wastegate stiff: a whole frame per step overshoots and the
+    // boost limit-cycles (worse the lower the frame rate). Integrate in small fixed steps.
+    const n = Math.max(1, Math.ceil(dt / TURBO_SUBSTEP_S));
+    for (let i = 0; i < n; i++) this._stepTurbo(dt / n, throttle);
+    this._prevThrottle = throttle;
+  }
+
+  /** @private One turbo integration step of length h seconds. */
+  _stepTurbo(h, throttle) {
     // --- Exhaust energy → turbine torque ---
     // Exhaust gas energy ∝ RPM × throttle. Small turbo = low inertia,
     // so even moderate exhaust flow accelerates the shaft quickly.
@@ -738,31 +753,23 @@ export class Drivetrain {
     // --- Shaft angular acceleration ---
     const netTorque = turbineTorque - compressorLoad - friction - wastegateBleed;
     const shaftAccel = netTorque / TURBO_INERTIA; // rad/s² on shaft
-    this._turboShaftRPS += (shaftAccel / (2 * Math.PI)) * dt;
+    this._turboShaftRPS += (shaftAccel / (2 * Math.PI)) * h;
     this._turboShaftRPS = Math.max(0, Math.min(this._turboShaftRPS, TURBO_MAX_SHAFT_RPS));
 
     // --- Boost pressure: compressor output ∝ shaft speed² ---
     const rawBoost = normShaft * normShaft * TURBO_MAX_PSI;
 
-    // --- BOV logic ---
-    const throttleDrop = this._prevThrottle - throttle;
-    if (this._turbo.bov && throttleDrop > 0.15 && this.boostPsi > BOV_THRESHOLD_PSI) {
-      this._bovActive = true;
-    }
-
     if (this._bovActive) {
       // BOV vents manifold pressure rapidly
-      this.boostPsi = Math.max(0, this.boostPsi - BOV_VENT_RATE * dt);
+      this.boostPsi = Math.max(0, this.boostPsi - BOV_VENT_RATE * h);
       // BOV also slows compressor (surge avoidance)
-      this._turboShaftRPS *= (1 - 1.5 * dt);
+      this._turboShaftRPS *= (1 - 1.5 * h);
       if (this.boostPsi < 0.5) {
         this._bovActive = false;
       }
     } else {
       this.boostPsi = Math.min(rawBoost, TURBO_WASTEGATE_PSI);
     }
-
-    this._prevThrottle = throttle;
   }
 
 }

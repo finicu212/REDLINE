@@ -699,6 +699,29 @@ describe('Drivetrain — dangerous shifts', () => {
   });
 });
 
+describe('Drivetrain — turbo stability', () => {
+  it('holds steady boost at constant full throttle, at any frame rate (no wastegate hunting)', async () => {
+    const { PROFILES } = await import('../profiles.js');
+    const p = PROFILES.i4_3;
+    const settle = (fps) => {
+      const dt = new Drivetrain(p);
+      let lo = Infinity, hi = -Infinity;
+      for (let i = 0; i < fps * 5; i++) {
+        dt.rpm = 4500;
+        dt._updateTurbo(1 / fps, 1);
+        if (i > fps * 4) { lo = Math.min(lo, dt.boostPsi); hi = Math.max(hi, dt.boostPsi); }
+      }
+      return { lo, hi };
+    };
+    const ref = settle(240);
+    for (const fps of [30, 60, 144]) {
+      const { lo, hi } = settle(fps);
+      expect(hi - lo, `${fps} fps`).toBeLessThan(0.05);
+      expect(Math.abs(hi - ref.hi), `${fps} fps`).toBeLessThan(0.1);
+    }
+  });
+});
+
 describe('Drivetrain — manifold pressure (boost gauge)', () => {
   it('petrol turbo pulls vacuum off-throttle and shows boost on it', () => {
     const dt = new Drivetrain(); // legacy petrol turbo
