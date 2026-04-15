@@ -29,6 +29,7 @@ export const DEFAULT_CHASSIS = {
 const SURFACE_GRIP = { track: 1, kerb: 0.9, runoff: 0.5 };
 const LOCKED_SLIDE_MU = 0.8;      // sliding rubber grips less than peak
 const ABS_EFFICIENCY = 0.96;
+const ABS_MIN_SHARE = 0.3;        // of axle grip ABS still brakes with while the corner saturates it
 const SPIN_YAW = 0.85;            // rad of slip angle that becomes a spin
 const BRAKE_HEADROOM = 1.15;      // brakes out-muscle the tyres: ABS, not the caliper, sets the limit
 const ESC_MAX_YAW = 0.25;
@@ -87,10 +88,16 @@ export class CarDynamics {
     this.events = [];
     this._prevV = 0;
     this._primed = false;
+    this.brakeDelivered = null; // set by brakeDecelFor() for the coming update()
   }
 
   /** Brake pedal → delivered deceleration, limited by what the tyres can take right now. */
   brakeDecelFor(pedal, maxDecel) {
+    this.brakeDelivered = this._brakeDecelFor(pedal, maxDecel);
+    return this.brakeDelivered;
+  }
+
+  _brakeDecelFor(pedal, maxDecel) {
     this.locked = false;
     this.absActive = false;
     // Real brakes can always lock a tyre: full pedal reaches the grip limit even on a sticky car
@@ -141,6 +148,8 @@ export class CarDynamics {
     this.events.length = 0;
     if (!(dt > 0)) return 0;
     const c = this.c;
+    const brakeDelivered = this.brakeDelivered;
+    this.brakeDelivered = null;
     const v = Math.max(0, speedMS);
     this.v = v;
 
@@ -170,10 +179,19 @@ export class CarDynamics {
     // --- Longitudinal demand per axle ---
     let longF = 0, longR = 0;
     if (this.aLong < 0 && brake > 0) {
+      // Only the brakes load the tyres: aero drag slows the car without using any grip
+      const tyreDecel = Math.min(-this.aLong, brakeDelivered ?? Infinity);
       // ABS/EBD share braking by dynamic load; older cars have a fixed bias (rear can lock)
       const bias = c.abs ? this.front : c.brakeBias;
-      longF = -this.aLong * bias;
-      longR = -this.aLong * (1 - bias);
+      longF = tyreDecel * bias;
+      longR = tyreDecel * (1 - bias);
+      if (c.abs) {
+        // ABS works per wheel: no axle is braked past the grip cornering leaves it
+        // (a floor keeps some braking when the corner alone already saturates the tyre)
+        const room = (cap, lat) => Math.max(ABS_MIN_SHARE * cap, Math.sqrt(Math.max(0, cap * cap - lat * lat)));
+        longF = Math.min(longF, ABS_EFFICIENCY * room(capF, Math.abs(aLatDemand) * fs));
+        longR = Math.min(longR, ABS_EFFICIENCY * room(capR, Math.abs(aLatDemand) * (1 - fs)));
+      }
     } else if (this.aLong > 0) {
       if (c.drive === 'fwd') longF = this.aLong; else longR = this.aLong;
     }

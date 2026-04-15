@@ -155,6 +155,35 @@ describe('CarDynamics — brakes', () => {
     expect(car.absActive).toBe(true);
   });
 
+  it('ABS stop from 230 km/h: aero drag adds decel but not tyre load, so no fake slide', () => {
+    const car = new CarDynamics(circleLine(100000), { mu: 1.15, downforce: 0.0005, abs: true });
+    let v = 64;
+    hold(car, v, 0.2);
+    for (let t = 0; t < 1; t += 1 / 120) {
+      const delivered = car.brakeDecelFor(1, 10.5);
+      v -= (delivered + 2.5) / 120; // + drag and engine braking
+      car.update(1 / 120, { speedMS: v, throttle: 0, brake: 1 });
+      expect(car.usageF).toBeLessThanOrEqual(1);
+      expect(car.usageR).toBeLessThanOrEqual(1);
+      expect(car.sliding).toBe(false);
+    }
+    expect(car.absActive).toBe(true);
+  });
+
+  it('ABS turning in on full brakes never overloads the rear (no brake-induced spin)', () => {
+    const car = new CarDynamics(circleLine(R), { mu: 1.0, frontWeight: 0.5, cgHeight: 0.3, abs: true });
+    let v = limit(1.0) * 0.9, maxYaw = 0;
+    hold(car, v, 0.3);
+    for (let t = 0; t < 0.6; t += 1 / 120) {
+      const delivered = car.brakeDecelFor(1, 12);
+      v -= delivered / 120;
+      car.update(1 / 120, { speedMS: v, throttle: 0, brake: 1 });
+      maxYaw = Math.max(maxYaw, Math.abs(car.yaw));
+    }
+    expect(maxYaw).toBeLessThan(0.05); // the rear never steps out
+    expect(car.spinTimer).toBe(0);
+  });
+
   it('gentle braking in a straight line never locks', () => {
     const car = new CarDynamics(circleLine(10000), { mu: 1.0, abs: false });
     hold(car, 40, 0.2);

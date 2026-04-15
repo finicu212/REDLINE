@@ -111,7 +111,7 @@ describe('RaceSession — marks and limits', () => {
     const p = PROFILES.v8_2;
     const dt = new Drivetrain(p);
     const session = new RaceSession(p, { record: null });
-    const ap = new Autopilot(session, p, { margin: 1.25 }); // hopelessly too fast
+    const ap = new Autopilot(session, p, { margin: 1.35 }); // hopelessly too fast
     const types = new Set();
     for (let t = 0; t < 90; t += 1 / 60) {
       session.step(1 / 60, dt, ap.drive(dt));
