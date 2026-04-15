@@ -30,12 +30,10 @@ const SURFACE_GRIP = { track: 1, kerb: 0.9, runoff: 0.5 };
 const LOCKED_SLIDE_MU = 0.8;      // sliding rubber grips less than peak
 const ABS_EFFICIENCY = 0.96;
 const SPIN_YAW = 0.85;            // rad of slip angle that becomes a spin
-// A spin snaps the car sideways and swings it back: it never faces backwards, because
-// the car only ever moves forward along the line and a reversed nose reads as reversing
-const SPIN_PEAK = 1.5;            // rad — just short of side-on
-const SPIN_PEAK_AT = 0.35;        // share of the spin spent swinging out
 const BRAKE_HEADROOM = 1.15;      // brakes out-muscle the tyres: ABS, not the caliper, sets the limit
 const ESC_MAX_YAW = 0.25;
+// Once the rear lets go, the fronts' unopposed side force spins the body up: yaw accelerates
+const YAW_ACCEL_PER_DEFICIT = 1.0; // rad/s² per m/s² of missing rear grip
 const TC_TARGET = 0.95;           // traction control keeps driven-axle usage at this
 // Slide amount = missing cornering / asked-for cornering. Near-straight, "asked-for" is ~0,
 // so a tiny deficit would read as a full slide — normalise by at least this (m/s²)
@@ -70,9 +68,9 @@ export class CarDynamics {
     this.d = 0;                 // lateral offset from the line, + = left
     this.vd = 0;                // lateral velocity
     this.yaw = 0;               // body slip angle (visual + physics), + = nose left
+    this.yawRate = 0;
     this.spinTimer = 0;
     this.spinDir = 1;
-    this.spinYaw0 = 0;
     this.v = 0;
     this.aLong = 0;
     this.aLat = 0;
@@ -204,6 +202,10 @@ export class CarDynamics {
         if (c.drive === 'fwd') longF = used; else longR = used;
       }
     }
+    // Mid-shift the slipping clutch is the weak link: the tyres never see more drive than they hold
+    if (clutchSlipping && this.aLong > 0) {
+      if (c.drive === 'fwd') longF = Math.min(longF, tractionAvail); else longR = Math.min(longR, tractionAvail);
+    }
 
     // Locked fronts can't steer
     const lockedFactor = this.locked ? 0.15 : 1;
@@ -226,41 +228,49 @@ export class CarDynamics {
     if (this.spinTimer > 0) {
       // --- Spinning: rotate, slide, bleed speed ---
       this.spinTimer -= dt;
-      const u = clamp(1 - this.spinTimer / SPIN_TIME, 0, 1);
-      const swing = u < SPIN_PEAK_AT
-        ? this.spinYaw0 + (SPIN_PEAK - this.spinYaw0) * Math.sin((u / SPIN_PEAK_AT) * Math.PI / 2)
-        : SPIN_PEAK * Math.cos(((u - SPIN_PEAK_AT) / (1 - SPIN_PEAK_AT)) * Math.PI / 2);
-      this.yaw = this.spinDir * swing;
+      this.yaw += this.spinDir * (2 * Math.PI / SPIN_TIME) * dt;
       scrub += Math.min(v, SPIN_DECEL * dt);
       this.vd *= Math.exp(-dt * 1.5);
       if (this.spinTimer <= 0) {
         this.yaw = 0;
+        this.yawRate = 0;
         this.vd = 0;
         this.events.push({ type: 'recovered' });
       }
     } else if (Math.abs(aLatDemand) > latCap && v > 3) {
       // --- Over the limit ---
       const deficit = Math.abs(aLatDemand) - latCap;
-      if (latCapF <= latCapR) {
+      // The rear can only step out while the fronts still grip enough to rotate the car.
+      // Way too fast, both axles are gone: the fronts wash out first (understeer).
+      if (latCapF <= latCapR || Math.abs(aLatDemand) > latCapF) {
         // Understeer: front washes out, car drifts to the outside
         this.understeer = Math.min(1, deficit / Math.max(Math.abs(aLatDemand), SLIDE_NORM_FLOOR));
         this.vd += turnSign * deficit * dt;
         this.yaw += (0 - this.yaw) * Math.min(1, dt * 3);
+        this.yawRate = 0;
         scrub += 0.3 * deficit * dt;
       } else {
-        // Oversteer: rear steps out, nose rotates into the corner, car slides wide a bit
+        // Oversteer: rear steps out, nose rotates into the corner. The path is still grip-limited,
+        // so the car slides wide by the full deficit — pointing the nose in doesn't add grip
         this.oversteer = Math.min(1, deficit / Math.max(Math.abs(aLatDemand), SLIDE_NORM_FLOOR));
         // Stability control brakes single wheels to kill yaw: slides stay small, never spin
         const yawGain = c.tc ? 0.35 : 1;
-        this.yaw += -turnSign * (deficit / Math.max(8, v)) * 2.2 * yawGain * dt;
-        this.vd += turnSign * deficit * 0.45 * dt;
+        this.yawRate += -turnSign * deficit * YAW_ACCEL_PER_DEFICIT * yawGain * dt;
+        this.yaw += this.yawRate * dt;
+        this.vd += turnSign * deficit * dt;
         scrub += (c.tc ? 0.4 : 0.25) * deficit * dt;
-        if (c.tc) this.yaw = clamp(this.yaw, -ESC_MAX_YAW, ESC_MAX_YAW);
+        if (c.tc && Math.abs(this.yaw) >= ESC_MAX_YAW) {
+          this.yaw = clamp(this.yaw, -ESC_MAX_YAW, ESC_MAX_YAW);
+          this.yawRate = 0;
+        }
         else if (Math.abs(this.yaw) > SPIN_YAW) this._startSpin();
       }
     } else {
       // --- Within grip: catch any slide and steer back to the line with spare grip ---
       const spare = Math.max(0, latCap - Math.abs(aLatDemand));
+      // Grip is back: the slide stops growing and the car straightens up
+      this.yawRate *= Math.exp(-dt * 8);
+      this.yaw += this.yawRate * dt;
       this.yaw += (0 - this.yaw) * Math.min(1, dt * 2.5);
       const want = -(DRIVER_OMEGA * DRIVER_OMEGA * this.d) - 2 * DRIVER_OMEGA * this.vd;
       this.vd += clamp(want, -spare, spare) * dt;
@@ -279,6 +289,7 @@ export class CarDynamics {
       this.d = side * BARRIER - p.offset;
       this.vd = -side * WALL_BOUNCE;
       this.yaw *= 0.3;
+      this.yawRate = 0;
       scrub += v * 0.4;
       this.events.push({ type: 'wall' });
     }
@@ -307,7 +318,6 @@ export class CarDynamics {
   _startSpin() {
     this.spinTimer = SPIN_TIME;
     this.spinDir = Math.sign(this.yaw) || 1;
-    this.spinYaw0 = Math.min(Math.abs(this.yaw), SPIN_PEAK);
     this.events.push({ type: 'spin' });
   }
 
