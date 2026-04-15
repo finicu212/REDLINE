@@ -30,6 +30,11 @@ const SURFACE_GRIP = { track: 1, kerb: 0.9, runoff: 0.5 };
 const LOCKED_SLIDE_MU = 0.8;      // sliding rubber grips less than peak
 const ABS_EFFICIENCY = 0.96;
 const SPIN_YAW = 0.85;            // rad of slip angle that becomes a spin
+// A spin snaps the car sideways and swings it back: it never faces backwards, because
+// the car only ever moves forward along the line and a reversed nose reads as reversing
+const SPIN_PEAK = 1.5;            // rad — just short of side-on
+const SPIN_PEAK_AT = 0.35;        // share of the spin spent swinging out
+const BRAKE_HEADROOM = 1.15;      // brakes out-muscle the tyres: ABS, not the caliper, sets the limit
 const ESC_MAX_YAW = 0.25;
 const TC_TARGET = 0.95;           // traction control keeps driven-axle usage at this
 // Slide amount = missing cornering / asked-for cornering. Near-straight, "asked-for" is ~0,
@@ -67,6 +72,7 @@ export class CarDynamics {
     this.yaw = 0;               // body slip angle (visual + physics), + = nose left
     this.spinTimer = 0;
     this.spinDir = 1;
+    this.spinYaw0 = 0;
     this.v = 0;
     this.aLong = 0;
     this.aLat = 0;
@@ -89,6 +95,8 @@ export class CarDynamics {
   brakeDecelFor(pedal, maxDecel) {
     this.locked = false;
     this.absActive = false;
+    // Real brakes can always lock a tyre: full pedal reaches the grip limit even on a sticky car
+    maxDecel = Math.max(maxDecel, BRAKE_HEADROOM * this.c.mu * (G + this.c.downforce * this.v * this.v));
     if (!(pedal > 0) || this.v <= 0.5) return maxDecel * Math.max(0, pedal || 0);
     const want = pedal * maxDecel;
     // Weight transfer depends on the decel actually achieved — iterate to the fixed point
@@ -218,7 +226,11 @@ export class CarDynamics {
     if (this.spinTimer > 0) {
       // --- Spinning: rotate, slide, bleed speed ---
       this.spinTimer -= dt;
-      this.yaw += this.spinDir * (2 * Math.PI / SPIN_TIME) * dt;
+      const u = clamp(1 - this.spinTimer / SPIN_TIME, 0, 1);
+      const swing = u < SPIN_PEAK_AT
+        ? this.spinYaw0 + (SPIN_PEAK - this.spinYaw0) * Math.sin((u / SPIN_PEAK_AT) * Math.PI / 2)
+        : SPIN_PEAK * Math.cos(((u - SPIN_PEAK_AT) / (1 - SPIN_PEAK_AT)) * Math.PI / 2);
+      this.yaw = this.spinDir * swing;
       scrub += Math.min(v, SPIN_DECEL * dt);
       this.vd *= Math.exp(-dt * 1.5);
       if (this.spinTimer <= 0) {
@@ -295,6 +307,7 @@ export class CarDynamics {
   _startSpin() {
     this.spinTimer = SPIN_TIME;
     this.spinDir = Math.sign(this.yaw) || 1;
+    this.spinYaw0 = Math.min(Math.abs(this.yaw), SPIN_PEAK);
     this.events.push({ type: 'spin' });
   }
 

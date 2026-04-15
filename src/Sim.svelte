@@ -35,6 +35,12 @@
   let isTouchDevice = $state(false);
   let showDebug = $state(false);
   let debugState = $state(null);
+  // HUD heights, so the track camera keeps the car clear of the instruments
+  let hudH = $state(0);
+  let hudCenterH = $state(0);
+  let viewW = $state(0);
+  // Phones stack gear + gauges across the middle; desktop only has the gear readout there
+  const cameraInset = $derived(isTouchDevice && viewW <= 600 ? hudH : hudCenterH + 24); // + hud padding
 
   // --- Touch state ---
   // Touch anywhere = throttle. Drag UP from touch origin = more throttle (same as mouse).
@@ -299,9 +305,9 @@
   });
 </script>
 
-<div class="sim" class:sim-touch={isTouchDevice}>
+<div class="sim" class:sim-touch={isTouchDevice} bind:clientWidth={viewW}>
   <div class="cylinder-area">
-    <TrackView session={race} carColor={config.profile.color} />
+    <TrackView session={race} carColor={config.profile.color} bottomInset={cameraInset} />
     <TrackHud session={race} tick={frame} />
   </div>
 
@@ -341,16 +347,51 @@
     </div>
   {/if}
 
+  <button class="info-btn" onclick={() => showControls = !showControls}>CONTROLS</button>
+
+  {#if showControls}
+    <div class="controls-popup" onclick={() => showControls = false}>
+      <div class="controls-card" onclick={(e) => e.stopPropagation()}>
+        <div class="controls-title">CONTROLS</div>
+        <div class="controls-section">
+          <div class="controls-heading">Keyboard + Mouse</div>
+          <div class="controls-row"><span class="controls-key">SPACE</span> Full throttle (35% in neutral)</div>
+          <div class="controls-row"><span class="controls-key">CLICK+DRAG UP</span> Proportional throttle</div>
+          <div class="controls-row"><span class="controls-key">SHIFT / C</span> Clutch (hold to shift)</div>
+          <div class="controls-row"><span class="controls-key">{'\u2191'} {'\u2193'}</span> Shift up / down</div>
+          <div class="controls-row"><span class="controls-key">S / B</span> Brake</div>
+          <div class="controls-row"><span class="controls-key">R</span> Back to the grid</div>
+          <div class="controls-row"><span class="controls-key">`</span> Toggle debug</div>
+        </div>
+        <div class="controls-section">
+          <div class="controls-heading">Touch</div>
+          <div class="controls-row"><span class="controls-key">DRAG UP</span> Throttle</div>
+          <div class="controls-row"><span class="controls-key">CLT</span> Hold clutch, then shift</div>
+          <div class="controls-row"><span class="controls-key">{'\u2191'} {'\u2193'} BRK</span> On-screen buttons</div>
+        </div>
+        <div class="controls-section">
+          <div class="controls-heading">Gamepad</div>
+          <div class="controls-row"><span class="controls-key">RT</span> Throttle</div>
+          <div class="controls-row"><span class="controls-key">LT</span> Brake</div>
+          <div class="controls-row"><span class="controls-key">LB</span> Clutch (hold to shift)</div>
+          <div class="controls-row"><span class="controls-key">RB</span> Shift up</div>
+          <div class="controls-row"><span class="controls-key">DPAD {'\u2193'}</span> Shift down</div>
+        </div>
+        <button class="controls-close" onclick={() => showControls = false}>CLOSE</button>
+      </div>
+    </div>
+  {/if}
+
   <!--
-    Desktop: bottom bar with odometer | gear | tachometer
-    Mobile:  tachometer centered in main area, gear below it, bottom bar minimal
+    Floats over the full-screen track. Desktop: odometer | gear | tachometer along the bottom.
+    Phones: gear + tachometer centered at the bottom.
   -->
-  <div class="hud">
+  <div class="hud" bind:clientHeight={hudH}>
     <div class="hud-left">
       <Odometer {speed} />
     </div>
 
-    <div class="hud-center">
+    <div class="hud-center" bind:clientHeight={hudCenterH}>
       {#if showHint}
         <p class="hint">{isTouchDevice ? 'DRAG UP to go · BRK to brake' : 'SPACE go · S brake · ↑↓ shift · R reset'}</p>
       {/if}
@@ -359,41 +400,6 @@
         onshiftup={() => drivetrain.shiftUp()}
         onshiftdown={() => drivetrain.shiftDown()} />
     </div>
-
-    <button class="info-btn" onclick={() => showControls = !showControls}>CONTROLS</button>
-
-    {#if showControls}
-      <div class="controls-popup" onclick={() => showControls = false}>
-        <div class="controls-card" onclick={(e) => e.stopPropagation()}>
-          <div class="controls-title">CONTROLS</div>
-          <div class="controls-section">
-            <div class="controls-heading">Keyboard + Mouse</div>
-            <div class="controls-row"><span class="controls-key">SPACE</span> Full throttle (35% in neutral)</div>
-            <div class="controls-row"><span class="controls-key">CLICK+DRAG UP</span> Proportional throttle</div>
-            <div class="controls-row"><span class="controls-key">SHIFT / C</span> Clutch (hold to shift)</div>
-            <div class="controls-row"><span class="controls-key">{'\u2191'} {'\u2193'}</span> Shift up / down</div>
-            <div class="controls-row"><span class="controls-key">S / B</span> Brake</div>
-            <div class="controls-row"><span class="controls-key">R</span> Back to the grid</div>
-            <div class="controls-row"><span class="controls-key">`</span> Toggle debug</div>
-          </div>
-          <div class="controls-section">
-            <div class="controls-heading">Touch</div>
-            <div class="controls-row"><span class="controls-key">DRAG UP</span> Throttle</div>
-            <div class="controls-row"><span class="controls-key">CLT</span> Hold clutch, then shift</div>
-            <div class="controls-row"><span class="controls-key">{'\u2191'} {'\u2193'} BRK</span> On-screen buttons</div>
-          </div>
-          <div class="controls-section">
-            <div class="controls-heading">Gamepad</div>
-            <div class="controls-row"><span class="controls-key">RT</span> Throttle</div>
-            <div class="controls-row"><span class="controls-key">LT</span> Brake</div>
-            <div class="controls-row"><span class="controls-key">LB</span> Clutch (hold to shift)</div>
-            <div class="controls-row"><span class="controls-key">RB</span> Shift up</div>
-            <div class="controls-row"><span class="controls-key">DPAD {'\u2193'}</span> Shift down</div>
-          </div>
-          <button class="controls-close" onclick={() => showControls = false}>CLOSE</button>
-        </div>
-      </div>
-    {/if}
 
     <div class="hud-right">
       {#if config.profile.turbo || config.profile.supercharger}
@@ -415,17 +421,24 @@
     touch-action: none;
     position: relative;
     overflow: hidden;
+    /* how far track-HUD toasts (coaching tips) sit above the bottom instruments */
+    --hud-clear: 118px;
   }
 
   .cylinder-area {
-    flex: 1;
-    min-height: 0;
-    position: relative;
+    position: absolute;
+    inset: 0;
   }
 
-  /* --- Desktop HUD: bottom bar with odometer | gear | tachometer --- */
+  /* --- Desktop HUD: odometer | gear | tachometer, overlaid on the track --- */
   .hud {
-    height: clamp(140px, 28vh, 280px);
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 40;
+    pointer-events: none;
+    background: linear-gradient(to top, rgba(8, 9, 14, 0.5), transparent);
     display: flex;
     align-items: flex-end;
     justify-content: space-between;
@@ -451,6 +464,10 @@
   .hud-left,
   .hud-right {
     flex-shrink: 0;
+  }
+
+  .hud :global(button) {
+    pointer-events: auto;
   }
 
   .hud-right {
@@ -671,26 +688,11 @@
      MOBILE: tachometer centered + gear below it, controls on sides
      ================================================================= */
   @media (max-width: 600px) {
-    /* Restructure: cylinders top, tachometer+gear center, minimal bottom */
     .sim-touch {
-      /* On mobile touch, reorder via grid */
-      display: grid;
-      grid-template-rows: auto 1fr auto;
-      grid-template-columns: 1fr;
+      --hud-clear: calc(clamp(140px, 40vmin, 220px) + 16px);
     }
 
-    .sim-touch .cylinder-area {
-      grid-row: 1;
-      flex: none;
-      height: 52vh;
-    }
-
-    /* Move tachometer from hud-right to center of the screen */
     .sim-touch .hud {
-      grid-row: 2;
-      height: auto;
-      flex-direction: column;
-      align-items: center;
       justify-content: center;
       padding: 0.5rem;
       gap: 0.4rem;
@@ -698,11 +700,6 @@
 
     .sim-touch .hud-left {
       display: none;
-    }
-
-    .sim-touch .hud-right {
-      order: -1;
-      align-items: center;
     }
 
     .sim-touch .hud-center {

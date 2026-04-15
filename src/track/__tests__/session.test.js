@@ -146,14 +146,15 @@ describe('RaceSession — review regressions', () => {
     return { dt, session };
   };
 
-  it('releasing the brake unlocks a locked wheel (no-ABS car)', () => {
+  it('every car gets ABS: full pedal mid-corner never locks, even on a no-ABS profile', () => {
     const p = PROFILES.v6_2;
+    expect(p.chassis.abs).toBe(false);
     const { dt, session } = brakingInCorner(p);
-    session.car.aLat = 9; // mid-corner load so full pedal locks
+    expect(session.car.c.abs).toBe(true);
+    session.car.aLat = 9;
     session.step(1 / 60, dt, { throttle: 0, brake: 1 });
-    expect(session.car.locked).toBe(true);
-    session.step(1 / 60, dt, { throttle: 0, brake: 0 });
     expect(session.car.locked).toBe(false);
+    expect(session.car.absActive).toBe(true);
   });
 
   it('braking with the clutch held still transfers weight forward', () => {

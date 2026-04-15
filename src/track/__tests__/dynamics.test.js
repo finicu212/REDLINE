@@ -118,11 +118,19 @@ describe('CarDynamics — brakes', () => {
     expect(raw.d).toBeGreaterThan(abs.d);
   });
 
+  it('full pedal reaches the tyre limit (~1g+) even when the profile brake is weaker', () => {
+    const car = new CarDynamics(circleLine(100000), { mu: 1.4, abs: true });
+    hold(car, 40, 0.2);
+    const d = car.brakeDecelFor(1, 8);
+    expect(d).toBeGreaterThan(1.25 * G);
+    expect(car.absActive).toBe(true);
+  });
+
   it('gentle braking in a straight line never locks', () => {
     const car = new CarDynamics(circleLine(10000), { mu: 1.0, abs: false });
     hold(car, 40, 0.2);
-    const d = car.brakeDecelFor(0.5, 9);
-    expect(d).toBeCloseTo(4.5, 5);
+    const d = car.brakeDecelFor(0.5, 12); // stronger than the 1.15 g floor: pedal scales it as-is
+    expect(d).toBeCloseTo(6, 5);
     expect(car.locked).toBe(false);
   });
 });
@@ -130,16 +138,35 @@ describe('CarDynamics — brakes', () => {
 describe('CarDynamics — spins, runoff, progress', () => {
   it('way too fast in an oversteery car: spins, bleeds speed, then recovers', () => {
     const car = new CarDynamics(circleLine(R), { mu: 1.0, frontWeight: 0.35, cgHeight: 0.3, abs: false });
-    let spun = false, recovered = false, v = limit(1.0) * 1.35, scrubTotal = 0;
+    let spun = false, recovered = false, v = limit(1.0) * 1.35, scrubTotal = 0, maxYaw = 0;
     for (let t = 0; t < 4; t += 1 / 120) {
       const sc = car.update(1 / 120, { speedMS: v, throttle: 0, brake: 0 });
       v = Math.max(0, v - sc); scrubTotal += sc;
+      maxYaw = Math.max(maxYaw, Math.abs(car.yaw));
       if (car.events.some(e => e.type === 'spin')) spun = true;
       if (car.events.some(e => e.type === 'recovered')) recovered = true;
     }
     expect(spun).toBe(true);
     expect(recovered).toBe(true);
     expect(scrubTotal).toBeGreaterThan(10);
+    expect(maxYaw).toBeLessThanOrEqual(Math.PI / 2); // never faces backwards
+    expect(car.yaw).toBe(0);
+  });
+
+  it('spinning with the throttle pinned still swings back to face forward', () => {
+    const car = new CarDynamics(circleLine(R), { mu: 1.0, frontWeight: 0.35, cgHeight: 0.3, abs: false });
+    car.yaw = -0.9;
+    car._startSpin();
+    let maxYaw = 0;
+    for (let t = 0; t < 1.6; t += 1 / 120) {
+      car.update(1 / 120, { speedMS: 20, throttle: 1, brake: 0 });
+      maxYaw = Math.max(maxYaw, Math.abs(car.yaw));
+      const fwd = Math.cos(car.pose().heading - car.pose().lineHeading);
+      expect(fwd).toBeGreaterThan(-0.2);
+    }
+    expect(maxYaw).toBeGreaterThan(1.2);   // it visibly snaps sideways
+    expect(car.spinTimer).toBeLessThanOrEqual(0);
+    expect(Math.abs(car.yaw)).toBeLessThan(0.1);
   });
 
   it('running wide off the track: runoff event, heavy drag, then rejoins', () => {

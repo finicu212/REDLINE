@@ -65,7 +65,8 @@ export class RaceSession {
     this.line = line;
     this.profile = profile;
     this.carId = profile?.id ?? 'default';
-    const chassis = profile?.chassis ?? {};
+    // ABS on every car: keyboard braking is on/off, and without ABS that's a lock-up every time
+    const chassis = { ...(profile?.chassis ?? {}), abs: true };
 
     this.corners = this._buildCorners(chassis);
     const kerbZones = this.corners.map(c => [c.sEntry - 25, c.sExit + 25]);

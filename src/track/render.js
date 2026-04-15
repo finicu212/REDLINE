@@ -28,6 +28,7 @@ export class TrackRenderer {
     this.carColor = carColor;
     this.dpr = 1;
     this.W = 0; this.H = 0;
+    this.bottomInset = 0; // px of HUD over the bottom-center: the camera frames the car above it
     this.cam = { x: 0, y: 0, h: 0, z: 3, init: false };
     this.shake = 0;
     this.time = 0;
@@ -268,7 +269,7 @@ export class TrackRenderer {
     ctx.fillRect(0, 0, this.W, this.H);
 
     ctx.save();
-    ctx.translate(this.W / 2 + jx, this.H * 0.58 + jy);
+    ctx.translate(this.W / 2 + jx, this._viewH() * 0.58 + jy);
     ctx.rotate(-cam.h);
     ctx.scale(cam.z, -cam.z);
     ctx.translate(-cam.x, -cam.y);
@@ -302,7 +303,7 @@ export class TrackRenderer {
     const ty = pose.y + Math.cos(pose.lineHeading) * lead;
     // Visible height grows with speed so braking points come into view in time
     const visible = 90 + v * 2.4;
-    const tz = this.H / visible;
+    const tz = this._viewH() / visible;
     if (!cam.init) {
       Object.assign(cam, { x: tx, y: ty, h: pose.lineHeading, z: tz, init: true });
       return;
@@ -316,6 +317,10 @@ export class TrackRenderer {
     dh = Math.atan2(Math.sin(dh), Math.cos(dh));
     cam.h += dh * kRot;
     cam.z += (tz - cam.z) * kZoom;
+  }
+
+  _viewH() {
+    return Math.max(this.H * 0.5, this.H - this.bottomInset);
   }
 
   _inView(x, y, pad = 0) {
@@ -757,7 +762,8 @@ export class TrackRenderer {
   _drawGG(car) {
     const { ctx } = this;
     const r = 42;
-    const cx = 14 + r, cy = this.H - 14 - r - 18;
+    const ODOMETER_CLEAR = 84; // the odometer floats in this corner
+    const cx = 14 + r, cy = this.H - ODOMETER_CLEAR - r - 18;
     const c = car.c;
     const grip = c.mu * (9.81 + c.downforce * car.v * car.v);
     ctx.save();

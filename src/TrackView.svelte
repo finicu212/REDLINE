@@ -2,8 +2,8 @@
   import { onMount } from 'svelte';
   import { TrackRenderer } from './track/render.js';
 
-  /** @type {{ session: import('./track/session.js').RaceSession, carColor?: string }} */
-  let { session, carColor } = $props();
+  /** @type {{ session: import('./track/session.js').RaceSession, carColor?: string, bottomInset?: number }} */
+  let { session, carColor, bottomInset = 0 } = $props();
 
   let canvasEl;
   let wrapEl;
@@ -22,6 +22,7 @@
     const frame = (now) => {
       const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
       last = now;
+      renderer.bottomInset = bottomInset;
       renderer.draw(dt);
       raf = requestAnimationFrame(frame);
     };

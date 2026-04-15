@@ -372,7 +372,7 @@
 
   .coach {
     position: absolute;
-    bottom: 14px;
+    bottom: var(--hud-clear, 14px);
     left: 50%;
     transform: translateX(-50%);
     display: flex;
@@ -418,7 +418,7 @@
     .sector { font-size: 0.5rem; }
     .st { font-size: 0.55rem; }
     .history { display: none; }
-    .coach { font-size: 0.6rem; white-space: normal; width: 86%; bottom: 8px; }
+    .coach { font-size: 0.6rem; white-space: normal; width: 86%; }
     .banners { top: 30%; }
     .b-main { font-size: 1.2rem; }
   }
